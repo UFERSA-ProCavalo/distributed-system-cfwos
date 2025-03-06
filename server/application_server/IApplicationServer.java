@@ -1,4 +1,4 @@
-package server.application_server;
+package server.application.server;
 
 public interface IApplicationServer {
 
