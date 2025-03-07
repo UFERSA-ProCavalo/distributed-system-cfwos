@@ -1,0 +1,16 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Servers and Client",
+      "type": "shell",
+      "command": "./scripts/start_servers.bat",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "detail": "This task runs the script to start all servers and the client."
+    }
+  ]
+}

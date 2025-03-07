@@ -3,14 +3,14 @@ package server.proxy_server;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class serverProxy {
+public class ServerProxy {
     private ServerSocket socketServer;
     private Socket socketClient;
     private AuthenticationService authService;
 
     public static final int SERVER_PORT = 11111;
 
-    public serverProxy() {
+    public ServerProxy() {
         this.run();
     }
 
@@ -23,10 +23,10 @@ public class serverProxy {
                 socketClient = socketServer.accept();
                 System.out.println("Client connected!");
 
-                serverProxyHandler server = new serverProxyHandler(socketClient, authService);
+                ServerProxyHandler server = new ServerProxyHandler(socketClient, authService);
                 Thread thread = new Thread(server);
-                serverProxyHandler.connectionCount++;
-                serverProxyHandler.activeConnections++;
+                ServerProxyHandler.connectionCount++;
+                ServerProxyHandler.activeConnections++;
                 thread.start();
             }
         } catch (Exception e) {
@@ -35,6 +35,6 @@ public class serverProxy {
     }
 
     public static void main(String[] args) {
-        new serverProxy();
+        new ServerProxy();
     }
 }

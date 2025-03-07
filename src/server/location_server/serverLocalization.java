@@ -5,12 +5,12 @@ import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
 
-public class serverLocalization {
+public class ServerLocalization {
     private ServerSocket serverSocket;
     private static final int LOCALIZATION_PORT = 11110;
     private Map<String, String> serverAddresses;
 
-    public serverLocalization() {
+    public ServerLocalization() {
         serverAddresses = new HashMap<>();
         // Add initial server addresses
         serverAddresses.put("ProxyServer", "ProxyServer:localhost:11111");
@@ -27,7 +27,7 @@ public class serverLocalization {
                 Socket clientSocket = serverSocket.accept();
 
                 // Handle client requests in a separate thread
-                serverLocalizationHandler handler = new serverLocalizationHandler(clientSocket, serverAddresses);
+                ServerLocalizationHandler handler = new ServerLocalizationHandler(clientSocket, serverAddresses);
                 Thread thread = new Thread(handler);
                 thread.start();
             }
@@ -37,6 +37,6 @@ public class serverLocalization {
     }
 
     public static void main(String[] args) {
-        new serverLocalization();
+        new ServerLocalization();
     }
 }

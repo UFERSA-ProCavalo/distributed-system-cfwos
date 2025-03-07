@@ -5,7 +5,7 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.Scanner;
 
-public class serverProxyHandler implements Runnable {
+public class ServerProxyHandler implements Runnable {
 
     private Socket socketClient;
     private AuthenticationService authService;
@@ -14,7 +14,7 @@ public class serverProxyHandler implements Runnable {
     private boolean connection = true;
     private Scanner s = null;
 
-    public serverProxyHandler(Socket client, AuthenticationService authService) {
+    public ServerProxyHandler(Socket client, AuthenticationService authService) {
         authService = new AuthenticationService();
         socketClient = client;
     }
