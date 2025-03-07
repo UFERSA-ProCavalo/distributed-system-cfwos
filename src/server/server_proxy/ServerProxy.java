@@ -24,7 +24,6 @@ public class ServerProxy {
 
             while (true) {
                 socketClient = socketServer.accept();
-                System.out.println("Client connected!");
 
                 ServerProxyHandler server = new ServerProxyHandler(socketClient, authService);
                 Thread thread = new Thread(server);

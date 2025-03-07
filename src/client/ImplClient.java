@@ -85,11 +85,13 @@ public class ImplClient implements Runnable {
             System.out.print("Enter password: ");
             password = scanner.nextLine();
             scanner.close();
+
             // send the credentials to the proxy server
             out = new ObjectOutputStream(proxySocket.getOutputStream());
             out.writeObject("LOGIN:" + username + ":" + password);
             out.flush();
 
+            // receive response from the proxy server
             in = new ObjectInputStream(proxySocket.getInputStream());
             String authResponse = (String) in.readObject();
             if (authResponse.equals("SUCCESS")) {

@@ -47,7 +47,10 @@ public class ServerProxyHandler implements Runnable {
 
     private void handleClientCommunication(String username) {
         String clientAddress = socketClient.getInetAddress().getHostAddress();
-        System.out.println("User " + username + " authenticated from " + clientAddress);
+        System.out.println("\n"
+                + "--------------------------------------------------------------"
+                + "\n"
+                + "[INFO] User '" + username + "' authenticated from " + clientAddress);
 
         try {
             s = new Scanner(socketClient.getInputStream());
@@ -59,7 +62,7 @@ public class ServerProxyHandler implements Runnable {
                         connection = false;
                         System.out.println("Connection ended by user: " + username);
                     } else {
-                        System.out.printf("[User %s - %s] %s%n", username, clientAddress, message);
+                        System.out.printf("[%s - %s] %s%n", username, clientAddress, message);
                     }
                 } else {
                     connection = false;
@@ -70,9 +73,12 @@ public class ServerProxyHandler implements Runnable {
             socketClient.close();
             activeConnections--;
 
-            System.out.println("Connection ended. \n"
-                    + "Client disconnected address -> " + clientAddress + "\n"
-                    + "Client disconnected hostname -> " + socketClient.getInetAddress().getHostName() + "\n");
+            System.out.println("\n"
+                    + "--------------------------------------------------------------"
+                    + "\n"
+                    + "|Connection with user " + "'" + username + "'" + "ended. \n"
+                    + "|Client disconnected address -> " + clientAddress + "\n"
+                    + "|Client disconnected hostname -> " + socketClient.getInetAddress().getHostName() + "\n");
 
         } catch (Exception e) {
             e.printStackTrace();
