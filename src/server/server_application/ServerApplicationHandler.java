@@ -1,4 +1,4 @@
-package server.application_server;
+package server.server_application;
 
 public class ServerApplicationHandler {
     

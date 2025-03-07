@@ -1,15 +1,19 @@
-package server;
+package server.server_proxy;
 
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class Server {
-    ServerSocket socketServer;
-    Socket socketClient;
+import server.server_proxy.auth.AuthService;
 
-    public static final int SERVER_PORT = 12345;
+public class ServerProxy {
+    private ServerSocket socketServer;
+    private Socket socketClient;
+    private AuthService authService;
 
-    public Server() {
+    public static final int SERVER_PORT = 11111;
+
+    public ServerProxy() {
+        this.authService = AuthService.getInstance();
         this.run();
     }
 
@@ -22,9 +26,10 @@ public class Server {
                 socketClient = socketServer.accept();
                 System.out.println("Client connected!");
 
-                serverHandler server = new serverHandler(socketClient);
+                ServerProxyHandler server = new ServerProxyHandler(socketClient, authService);
                 Thread thread = new Thread(server);
-                serverHandler.connectionCount++;
+                ServerProxyHandler.connectionCount++;
+                ServerProxyHandler.activeConnections++;
                 thread.start();
             }
         } catch (Exception e) {
@@ -33,6 +38,6 @@ public class Server {
     }
 
     public static void main(String[] args) {
-        new Server();
+        new ServerProxy();
     }
 }

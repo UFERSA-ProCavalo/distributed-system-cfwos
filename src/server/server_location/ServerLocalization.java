@@ -1,4 +1,4 @@
-package server.location_server;
+package server.server_location;
 
 import java.net.ServerSocket;
 import java.net.Socket;

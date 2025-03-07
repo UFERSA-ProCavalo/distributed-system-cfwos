@@ -1,11 +1,27 @@
-package server.proxy_server;
+package server.server_proxy.auth;
 
-import server.model.User;
 import java.util.HashMap;
 import java.util.Map;
 
-public class AuthenticationService {
+import server.server_proxy.auth.model.User;
+
+public class AuthService {
     private static final Map<String, User> users = new HashMap<>();
+
+    // Singleton instance
+    private static AuthService instance;
+
+    private AuthService() {
+        // Private constructor to prevent instantiation
+
+    }
+
+    public static AuthService getInstance() {
+        if (instance == null) {
+            instance = new AuthService();
+        }
+        return instance;
+    }
 
     static {
         // Add sample users

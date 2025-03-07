@@ -7,30 +7,17 @@ import java.net.Socket;
 import java.util.Scanner;
 import java.util.function.Consumer;
 
-import client.gui.ClientGUI;
-
 public class ImplClient implements Runnable {
 
     private Socket socket;
     private boolean connection = false;
     private PrintStream output;
-    private ClientGUI gui;
     private Consumer<String> messageDisplay;
     private String username;
     private String password;
 
     public ImplClient(Socket client) {
         this.socket = client;
-    }
-
-    public ImplClient(Socket client, String username, String password) {
-        this.socket = client;
-        this.username = username;
-        this.password = password;
-    }
-
-    public void setGUI(ClientGUI gui) {
-        this.gui = gui;
     }
 
     public void setMessageDisplay(Consumer<String> messageDisplay) {
@@ -71,6 +58,7 @@ public class ImplClient implements Runnable {
     }
 
     public void startConnection() {
+
         try {
             // First connect to localization server
             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
@@ -87,28 +75,51 @@ public class ImplClient implements Runnable {
             System.out.println(socket.isClosed());
             socket = proxySocket;
             System.out.println(socket.isClosed());
-            //output = new PrintStream(proxySocket.getOutputStream());
+            // output = new PrintStream(proxySocket.getOutputStream());
             connection = true;
 
-            // // Authenticate with proxy server
+            // Authenticate with proxy server
+            Scanner scanner = new Scanner(System.in);
+            System.out.print("Enter username: ");
+            username = scanner.nextLine();
+            System.out.print("Enter password: ");
+            password = scanner.nextLine();
+            scanner.close();
+            // send the credentials to the proxy server
+            out = new ObjectOutputStream(proxySocket.getOutputStream());
+            out.writeObject("LOGIN:" + username + ":" + password);
+            out.flush();
 
-            // out = new ObjectOutputStream(proxySocket.getOutputStream());
-            // in = new ObjectInputStream(proxySocket.getInputStream());
-            // out.writeObject("LOGIN:" + username + ":" + password);
+            in = new ObjectInputStream(proxySocket.getInputStream());
+            String authResponse = (String) in.readObject();
+            if (authResponse.equals("SUCCESS")) {
 
-            // String authResponse = (String) in.readObject();
-            // if (authResponse.equals("SUCCESS")) {
-            // this.socket = proxySocket;
-
-            // System.out.println("Successfully authenticated and connected to proxy
-            // server");
-            // } else {
-            // throw new Exception("Authentication failed: " + authResponse);
-            // }
+                System.out.println("Successfully authenticated and connected to proxy server");
+            } else {
+                throw new Exception("Authentication failed: " + authResponse);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
+
             connection = false;
         }
     }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void connect(String username, String password) {
+        try {
+
+            setMessageDisplay(message -> {
+                System.out.println("Message from server: " + message);
+            });
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 }

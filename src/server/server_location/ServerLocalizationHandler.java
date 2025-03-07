@@ -1,4 +1,4 @@
-package server.location_server;
+package server.server_location;
 
 import java.net.Socket;
 import java.io.ObjectInputStream;
@@ -24,7 +24,7 @@ public class ServerLocalizationHandler implements Runnable {
                 ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream())) {
 
             String request = (String) in.readObject();
-            System.out.println("Received request: " + request);
+            System.out.println("|Received request: " + request);
 
             // Redirect to proxy server if request is "START_CONNECTION"
             if (request.equals("START_CONNECTION")) {
@@ -33,8 +33,7 @@ public class ServerLocalizationHandler implements Runnable {
                 String address = Server[1];
                 int port = Integer.parseInt(Server[2]);
                 out.writeObject(address + ":" + port);
-                System.out.println("Connected client: ");
-                System.out.println("Sent response: " + address + ":" + port);
+                System.out.println("|Sent response: " + address + ":" + port);
             }
 
         } catch (Exception e) {

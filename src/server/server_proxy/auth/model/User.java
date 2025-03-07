@@ -1,4 +1,4 @@
-package server.model;
+package server.server_proxy.auth.model;
 
 public class User {
     private String username;
@@ -17,3 +17,4 @@ public class User {
         return this.password.equals(password);
     }
 }
+

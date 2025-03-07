@@ -1,10 +1,21 @@
 @echo off
+setlocal
 
-:: Start Localization Server
-start cmd /k "java -cp bin server.location_server.ServerLocalization"
+echo Starting Localization Server...
+start cmd /k "title Localization Server && echo Starting Localization Server on port 11110... && java -cp bin server.location_server.ServerLocalization"
 
-:: Start Proxy Server
-start cmd /k "java -cp bin server.proxy_server.ServerProxy"
+echo Waiting for Localization Server to initialize...
+timeout /t 3 /nobreak > nul
 
-:: Start Client
-start cmd /k "java -cp bin client.Client"
+echo Starting Proxy Server...
+start cmd /k "title Proxy Server && echo Starting Proxy Server on port 11111... && java -cp bin server.proxy_server.ServerProxy"
+
+echo Waiting for Proxy Server to initialize...
+timeout /t 3 /nobreak > nul
+
+echo Starting Client...
+start cmd /k "title Client && echo Starting Client... && java -cp bin client.Client"
+echo Waiting for Client to initialize...
+
+echo All components started.
+endlocal

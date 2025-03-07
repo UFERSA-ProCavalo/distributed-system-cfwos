@@ -1,22 +1,24 @@
-package server.proxy_server;
+package server.server_proxy;
 
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.Scanner;
 
+import server.server_proxy.auth.AuthService;
+
 public class ServerProxyHandler implements Runnable {
 
     private Socket socketClient;
-    private AuthenticationService authService;
+    private AuthService authService;
     public static int connectionCount = 0;
     public static int activeConnections = 0;
     private boolean connection = true;
     private Scanner s = null;
 
-    public ServerProxyHandler(Socket client, AuthenticationService authService) {
-        authService = new AuthenticationService();
-        socketClient = client;
+    public ServerProxyHandler(Socket client, AuthService authService) {
+        this.authService = authService;
+        this.socketClient = client;
     }
 
     public void run() {
