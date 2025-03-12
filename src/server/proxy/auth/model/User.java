@@ -1,4 +1,4 @@
-package server.server_proxy.auth.model;
+package server.proxy.auth.model;
 
 public class User {
     private String username;

@@ -1,9 +1,9 @@
-package server.server_proxy.auth;
+package server.proxy.auth;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import server.server_proxy.auth.model.User;
+import server.proxy.auth.model.User;
 
 public class AuthService {
     private static final Map<String, User> users = new HashMap<>();
