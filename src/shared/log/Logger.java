@@ -130,10 +130,6 @@ public class Logger {
     }
 
     /**
-     * Get a logger with explicit component name
-     */
-
-    /**
      * Get a logger with explicit component name and log directory
      */
     public static Logger getLogger(String componentName, Path logDir) {
@@ -162,6 +158,11 @@ public class Logger {
     public void error(String message) {
         log(LogType.ERROR, message);
     }
+    //empty line for readability
+    public void br() {
+        log(LogType.INFO, "");
+    }
+
 
     private String getColorForLevel(LogType level) {
         switch (level) {

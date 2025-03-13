@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import shared.log.Logger;
-import shared.messages.MessageBus;
 
 public class LocalizationServer {
     private ServerSocket serverSocket;
@@ -20,7 +19,6 @@ public class LocalizationServer {
     private static final int PROXY_PORT = 22220;
     private static final int LOCALIZATION_PORT = 11110;
     private static final Logger logger = Logger.getLogger();
-    private static final MessageBus messageBus = new MessageBus("Localization-Server", logger);
 
     public LocalizationServer() {
 
@@ -29,19 +27,12 @@ public class LocalizationServer {
         serverAddresses = new HashMap<>();
         try {
             serverSocket = new ServerSocket(LOCALIZATION_PORT);
-            logger.info("Server localization started on address " + serverSocket.getInetAddress().getHostAddress()
-                    + ":" + LOCALIZATION_PORT);
+            logger.info("Localization Server started at: {}", serverSocket);
+            running = true;
         } catch (Exception e) {
             logger.error("Error while starting Localization Server: " + e.getMessage());
-            return;
         }
-
         // Set the server addresses
-
-        running = true;
-        logger.info("Localization server started: {}:{}",
-                serverSocket.getInetAddress().getHostAddress(),
-                serverSocket.getLocalPort());
 
         serverAddresses.put("Application", "ProxyServer" + ":" + PROXY_IP + ":" + PROXY_PORT);
         logger.info("Known addresses: {}", serverAddresses);
@@ -61,9 +52,6 @@ public class LocalizationServer {
             while (running) {
                 try {
                     Socket clientSocket = serverSocket.accept(); // ACCEPT CLIENT CONNECTION
-                    logger.info("Client connected: {}:{}",
-                            clientSocket.getInetAddress().getHostAddress(),
-                            clientSocket.getPort());
 
                     // Increment process and active connections
                     synchronized (LocalizationServer.class) {
@@ -75,8 +63,7 @@ public class LocalizationServer {
 
                     // Handle client requests in a separate thread
                     LocalizationServerHandler handler = new LocalizationServerHandler(clientSocket,
-                            logger,
-                            messageBus);
+                            logger);
 
                     Thread thread = new Thread(handler);
                     thread.start();
@@ -87,7 +74,7 @@ public class LocalizationServer {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error in server localization: " + e.getMessage());
         }
     }
 

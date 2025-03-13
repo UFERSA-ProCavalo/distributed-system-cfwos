@@ -3,6 +3,7 @@ package shared.messages;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 
 import shared.log.Logger;
@@ -14,20 +15,40 @@ public class SocketMessageTransport implements Runnable {
     private ObjectOutputStream out;
     private ObjectInputStream in;
     private boolean running = true;
+    private final boolean isServer;
 
     public SocketMessageTransport(Socket socket, MessageBus messageBus, Logger logger) {
+        this(socket, messageBus, logger, false);
+    }
+
+    public SocketMessageTransport(Socket socket, MessageBus messageBus, Logger logger, boolean isServer) {
         this.socket = socket;
         this.messageBus = messageBus;
         this.logger = logger;
-        try {
-            this.out = new ObjectOutputStream(socket.getOutputStream());
-            out.flush(); // Important to avoid deadlock on input stream creation
-            this.in = new ObjectInputStream(socket.getInputStream());
-            logger.debug("Socket transport initialized for " + socket.getRemoteSocketAddress());
-        } catch (IOException e) {
-            logger.error("Failed to initialize streams", e);
-            running = false;
+        this.isServer = isServer;
+
+        if (isServer) {
+            try {
+                this.out = new ObjectOutputStream(socket.getOutputStream());
+                out.flush();
+                this.in = new ObjectInputStream(socket.getInputStream());
+            } catch (Exception e) {
+                logger.error("Failed to initialize streams", e);
+                close();
+            }
+        } else {
+            try {
+                this.in = new ObjectInputStream(socket.getInputStream());
+                this.out = new ObjectOutputStream(socket.getOutputStream());
+            } catch (Exception e) {
+                logger.error("Failed to initialize streams", e);
+                close();
+            }
         }
+
+        logger.info("Socket transport initialized: " + socket);
+
+        messageBus.subscribe("*", this::HandleInOutMessage);
     }
 
     @Override
@@ -35,16 +56,24 @@ public class SocketMessageTransport implements Runnable {
         while (running && !socket.isClosed()) {
             try {
                 Object obj = in.readObject();
-                if (obj instanceof Message message) {
+                /*
+                 * Java 16 feature: Pattern Type Matching in instanceof
+                 * https://openjdk.java.net/jeps/394
+                 */
+                // if (obj instanceof Message message) {
+                // Forward received message to the message bus
+                if (obj instanceof Message) {
                     // Forward received message to the message bus
-                    logger.debug("Received message: " + message);
+                    Message message = (Message) obj;
+                    logger.info("Received message: " + message);
                     messageBus.send(message);
+
                 } else {
                     logger.warning("Received non-message object: " + obj.getClass().getName());
                 }
             } catch (IOException e) {
                 if (running) {
-                    logger.debug("Socket connection closed");
+                    logger.info("Socket connection closed");
                 }
                 running = false;
             } catch (ClassNotFoundException e) {
@@ -71,11 +100,18 @@ public class SocketMessageTransport implements Runnable {
         try {
             out.writeObject(message);
             out.flush();
-            logger.debug("Sent message: " + message);
+            logger.info("Sent message: " + message);
         } catch (IOException e) {
             logger.error("Failed to send message: " + e.getMessage());
             running = false;
         }
+    }
+
+    /**
+     * Handle outgoing messages that need to be sent over the socket
+     */
+    private void HandleInOutMessage(Message message) {
+
     }
 
     /**
@@ -92,7 +128,7 @@ public class SocketMessageTransport implements Runnable {
             }
             if (socket != null && !socket.isClosed()) {
                 socket.close();
-                logger.debug("Socket transport closed");
+                logger.info("Socket transport closed");
             }
         } catch (IOException e) {
             logger.error("Error closing socket", e);

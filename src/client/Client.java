@@ -7,6 +7,7 @@ import shared.log.Logger;
 import shared.messages.Message;
 import shared.messages.MessageBus;
 import shared.messages.MessageType;
+import shared.messages.SocketMessageTransport;
 
 public class Client {
     private final Logger logger = Logger.getLogger();
@@ -16,6 +17,7 @@ public class Client {
     private final int SERVER_PORT = 11110;
     private ImplClient implClient;
     private MessageBus messageBus;
+    private SocketMessageTransport transport;
     private int clientId;
 
     public Client() {

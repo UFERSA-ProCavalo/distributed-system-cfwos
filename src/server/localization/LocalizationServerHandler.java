@@ -6,6 +6,7 @@ import java.io.ObjectOutputStream;
 import shared.log.Logger;
 import shared.messages.Message;
 import shared.messages.MessageBus;
+import shared.messages.SocketMessageTransport;
 
 import java.util.Map;
 import java.util.Scanner;
@@ -13,105 +14,131 @@ import java.util.Scanner;
 public class LocalizationServerHandler implements Runnable {
     private Scanner scanner;
     private boolean connected = true;
+    private String clientId;
 
     private final Socket clientSocket;
     private final Logger logger;
-    private final MessageBus messageBus;
-    private ObjectInputStream in;
+    private MessageBus messageBus;
+    private SocketMessageTransport transport;
 
-    public LocalizationServerHandler(Socket clientSocket, Logger logger,
-            MessageBus messageBus) {
+    public LocalizationServerHandler(Socket clientSocket, Logger logger) {
         this.clientSocket = clientSocket;
         this.logger = logger;
-        this.messageBus = messageBus;
         this.scanner = null;
 
-        // Register message handlers for this client connection
-        messageBus.subscribe("START_CONNECTION", this::handleStartHandshake);
-        messageBus.subscribe("DISCONNECT", this::handleDisconnect);
+        this.clientId = "Client-"
+                + clientSocket.getInetAddress().getHostAddress()
+                + ":"
+                + clientSocket.getPort();
+        logger.info("ImplClient initialized with socket: " + clientSocket);
 
-        // Default temporary ID based on socket address until we get the real client ID
+        logger.info("New client connected: {}:{}",
+                clientSocket.getInetAddress().getHostAddress(),
+                clientSocket.getPort());
+
+        logger.info("Client connected: {}:{}",
+                clientSocket.getInetAddress().getHostAddress(),
+                clientSocket.getPort());
+
     }
 
     public void run() {
         try {
-
-            scanner = new Scanner(clientSocket.getInputStream());
+            setupMessageTransport();
+            logger.info("Waiting for client message...");
 
             while (connected) {
-                logger.info("Waiting for client message...");
-                String handshake = scanner.nextLine();
-                logger.info(handshake);
-            }
-
-            String request = (String) in.readObject();
-            System.out.println("|Received request: " + request);
-
-            // Redirect to proxy server if request is "START_CONNECTION"
-            if (request.equals("START_CONNECTION")) {
-
-                String[] Server = LocalizationServer.getServerAddresses().get("ProxyServer").split(":");
-                String address = Server[1];
-                int port = Integer.parseInt(Server[2]);
-
-                Message message = new Message(
-                        "START_CONNECTION",
-                        "ProxyServer",
-                        "Client-"
-                                + clientSocket.getInetAddress().getHostAddress()
-                                + ":"
-                                + clientSocket.getPort(),
-                        new String[] { address, ":", String.valueOf(port) });
-
-                messageBus.send(message);
-
-                // out.writeObject(address + ":" + port);
-                logger.debug("Sent message: {}", message);
-            }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        scanner.close();
-    }
-
-    private void handleStartHandshake(Message message) {
-        // Handle the start connection message
-        logger.info("Handling start connection message: {}", message);
-        // Logic to handle the start connection
-        try {
-            Object obj = in.readObject();
-            if (obj instanceof Message) {
-                // Forward received message to the message bus
-                logger.debug("Received message: " + message);
-                messageBus.send(message);
-            } else {
-                logger.warning("Received non-message object: " + obj.getClass().getName());
+                // Wait for messages
+                Thread.sleep(1000);
             }
         } catch (Exception e) {
-            logger.error("Error while handling start connection message", e);
+            logger.error("Error in client handler", e);
         } finally {
-            // Close the scanner and input stream
-            if (scanner != null) {
-                scanner.close();
-            }
-            try {
-                in.close();
-            } catch (Exception e) {
-                logger.error("Error closing input stream", e);
-            }
-            try {
-                clientSocket.close();
-            } catch (Exception e) {
-                logger.error("Error closing client socket", e);
-            }
+            cleanup();
         }
-
     }
 
-    private void handleDisconnect(Message message) {
-        // Handle the disconnect message
-        logger.info("Handling disconnect message: {}", message);
-        // Logic to handle the disconnect
+    private void setupMessageTransport() {
+
+        String ServerComponent = "Server-"
+                + clientSocket.getInetAddress().getHostAddress()
+                + ":"
+                + clientSocket.getLocalPort();
+
+        messageBus = new MessageBus(ServerComponent, logger);
+        transport = new SocketMessageTransport(clientSocket, messageBus, logger, true);
+        try {
+
+            // Subscribe to relevant message types
+            messageBus.subscribe("START_CONNECTION", this::handleStartConnection);
+            // Adicione um novo tipo de mensagem aqui
+
+            // Wait until disconnected
+
+        } catch (Exception e) {
+            logger.error("Error in message transport setup", e);
+        }
+    }
+
+    private void handleStartConnection(Message message) {
+        try {
+            logger.info("Handling START_CONNECTION message: {}", message);
+
+            String[] server = getProxyServerInfo();
+
+            // Respond with server information
+            Message response = new Message(
+                    "SERVER_ADDRESS",
+                    messageBus.getComponentName(),
+                    message.getSender(),
+                    new String[] { server[0], server[1] });
+
+            transport.sendMessage(response);
+            logger.info("Sent proxy server info to client");
+
+        } catch (Exception e) {
+            logger.error("Error handling START_CONNECTION", e);
+        }
+    }
+
+    private String[] getProxyServerInfo() {
+        String[] server = new String[2];
+        String serverEntry = LocalizationServer.getServerAddresses().get("ProxyServer");
+
+        if (serverEntry != null) {
+            String[] parts = serverEntry.split(":");
+            if (parts.length >= 3) {
+                server[0] = parts[1]; // host
+                server[1] = parts[2]; // port
+            } else {
+                // Default fallback
+                server[0] = "localhost";
+                server[1] = "11111";
+            }
+        } else {
+            // Default fallback
+            server[0] = "localhost";
+            server[1] = "11111";
+        }
+
+        return server;
+    }
+
+    private void cleanup() {
+        try {
+            // First unsubscribe to prevent more callbacks
+            messageBus.unsubscribe("START_CONNECTION", this::handleStartConnection);
+
+            // Close transport
+            if (transport != null) {
+                transport.close();
+            }
+
+            // No need to close socket directly as transport will do it
+
+            logger.info("Handler cleanup completed for client {}", clientId);
+        } catch (Exception e) {
+            logger.error("Error during handler cleanup", e);
+        }
     }
 }

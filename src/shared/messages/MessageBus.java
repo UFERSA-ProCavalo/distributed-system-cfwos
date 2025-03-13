@@ -11,9 +11,9 @@ import shared.log.Logger;
 public class MessageBus {
 
     private final Logger logger;
-    private final Map<String, List<MessageHandler>> handlers = new HashMap<>();
+    private final Map<String, List<IMessageHandler>> handlers = new HashMap<>();
     private final Map<String, List<Consumer<Message>>> subscribers = new HashMap<>();
-    private final String componentName;
+    private String componentName;
 
     public MessageBus(String componentName, Logger logger) {
         this.logger = logger;
@@ -24,11 +24,11 @@ public class MessageBus {
     /**
      * Register a handler for specific message types
      */
-    public void registerHandler(MessageHandler handler) {
+    public void registerHandler(IMessageHandler handler) {
         synchronized (handlers) {
             for (String type : handler.getHandledTypes()) {
                 handlers.computeIfAbsent(type, k -> new ArrayList<>()).add(handler);
-                logger.debug("Registered handler for message type: " + type);
+                logger.info("Registered handler for message type: " + type);
             }
         }
     }
@@ -38,8 +38,29 @@ public class MessageBus {
      */
     public void subscribe(String messageType, Consumer<Message> callback) {
         synchronized (subscribers) {
-            subscribers.computeIfAbsent(messageType, k -> new ArrayList<>()).add(callback);
-            logger.debug("Added subscription for message type: " + messageType);
+            if (messageType.equals("*")) {
+                for (String type : MessageType.getAllTypes()) {
+                    subscribers.computeIfAbsent(type, k -> new ArrayList<>()).add(callback);
+                }
+                subscribers.computeIfAbsent("*", k -> new ArrayList<>()).add(callback);
+                logger.warning("Added wildcard subscription for all message types");
+            } else {
+                subscribers.computeIfAbsent(messageType, k -> new ArrayList<>()).add(callback);
+                logger.info("Added subscription for message type: " + messageType);
+            }
+        }
+    }
+
+    /**
+     * Unsubscribe from a specific message type
+     */
+    public void unsubscribe(String messageType, Consumer<Message> callback) {
+        synchronized (subscribers) {
+            List<Consumer<Message>> callbacks = subscribers.get(messageType);
+            if (callbacks != null) {
+                callbacks.remove(callback);
+                logger.info("Removed subscription for message type: " + messageType);
+            }
         }
     }
 
@@ -48,6 +69,7 @@ public class MessageBus {
      */
     public void send(Message message) {
         processMessage(message); // Now behaves like sendSync()
+
     }
 
     /**
@@ -65,7 +87,7 @@ public class MessageBus {
     }
 
     private void processMessage(Message message) {
-        logger.debug("Processing message: " + message);
+        logger.info("Processing message: " + message);
 
         // First notify subscribers
         notifySubscribers(message);
@@ -95,12 +117,12 @@ public class MessageBus {
     }
 
     private void processWithHandlers(Message message) {
-        List<MessageHandler> typeHandlers;
+        List<IMessageHandler> typeHandlers;
         synchronized (handlers) {
             typeHandlers = handlers.getOrDefault(message.getType(), List.of());
         }
 
-        for (MessageHandler handler : typeHandlers) {
+        for (IMessageHandler handler : typeHandlers) {
             if (handler.isValidMessage(message.getType())) {
                 try {
                     Message response = handler.handleMessage(message);
@@ -120,6 +142,16 @@ public class MessageBus {
     public void shutdown() {
         logger.info("MessageBus shutdown for component: " + componentName);
     }
+
+    public String getComponentName() {
+        return componentName;
+    }
+
+    // Added for testing purposes
+    // TODO refactor in a way that doesn't expose the setter
+    public String setComponentName(String componentName) {
+        return this.componentName = componentName;
+    }
 }
 // Compare this snippet from src/server/server_proxy/ServerProxyHandler.java:
-//         logger.info("ServerProxyHandler cleanup completed");
+// logger.info("ServerProxyHandler cleanup completed");
