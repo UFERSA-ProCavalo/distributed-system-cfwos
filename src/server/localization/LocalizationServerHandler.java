@@ -1,18 +1,13 @@
 package server.localization;
 
 import java.net.Socket;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import shared.log.Logger;
 import shared.messages.Message;
 import shared.messages.MessageBus;
+import shared.messages.MessageType;
 import shared.messages.SocketMessageTransport;
 
-import java.util.Map;
-import java.util.Scanner;
-
 public class LocalizationServerHandler implements Runnable {
-    private Scanner scanner;
     private boolean connected = true;
     private String clientId;
 
@@ -24,7 +19,6 @@ public class LocalizationServerHandler implements Runnable {
     public LocalizationServerHandler(Socket clientSocket, Logger logger) {
         this.clientSocket = clientSocket;
         this.logger = logger;
-        this.scanner = null;
 
         this.clientId = "Client-"
                 + clientSocket.getInetAddress().getHostAddress()
@@ -47,10 +41,18 @@ public class LocalizationServerHandler implements Runnable {
             setupMessageTransport();
             logger.info("Waiting for client message...");
 
-            while (connected) {
-                // Wait for messages
-                Thread.sleep(1000);
+            // Main message processing loop - single threaded
+            while (connected && transport.isRunning() && !clientSocket.isClosed()) {
+                // This will block until a message is available or connection closes
+                boolean messageProcessed = transport.readMessage();
+
+                // If the message couldn't be processed (connection closed)
+                if (!messageProcessed) {
+                    connected = false;
+                }
             }
+
+            logger.info("Client disconnected");
         } catch (Exception e) {
             logger.error("Error in client handler", e);
         } finally {
@@ -59,7 +61,6 @@ public class LocalizationServerHandler implements Runnable {
     }
 
     private void setupMessageTransport() {
-
         String ServerComponent = "Server-"
                 + clientSocket.getInetAddress().getHostAddress()
                 + ":"
@@ -67,28 +68,25 @@ public class LocalizationServerHandler implements Runnable {
 
         messageBus = new MessageBus(ServerComponent, logger);
         transport = new SocketMessageTransport(clientSocket, messageBus, logger, true);
+
         try {
-
             // Subscribe to relevant message types
-            messageBus.subscribe("START_CONNECTION", this::handleStartConnection);
+            messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
             // Adicione um novo tipo de mensagem aqui
-
-            // Wait until disconnected
-
         } catch (Exception e) {
             logger.error("Error in message transport setup", e);
         }
     }
 
-    private void handleStartConnection(Message message) {
+    private void handleStartRequest(Message message) {
         try {
-            logger.info("Handling START_CONNECTION message: {}", message);
+            logger.info("Handling START_REQUEST message: {}", message);
 
             String[] server = getProxyServerInfo();
 
             // Respond with server information
             Message response = new Message(
-                    "SERVER_ADDRESS",
+                    MessageType.START_RESPONSE,
                     messageBus.getComponentName(),
                     message.getSender(),
                     new String[] { server[0], server[1] });
@@ -97,7 +95,7 @@ public class LocalizationServerHandler implements Runnable {
             logger.info("Sent proxy server info to client");
 
         } catch (Exception e) {
-            logger.error("Error handling START_CONNECTION", e);
+            logger.error("Error handling START_REQUEST", e);
         }
     }
 
@@ -127,7 +125,7 @@ public class LocalizationServerHandler implements Runnable {
     private void cleanup() {
         try {
             // First unsubscribe to prevent more callbacks
-            messageBus.unsubscribe("START_CONNECTION", this::handleStartConnection);
+            messageBus.unsubscribe(MessageType.START_REQUEST, this::handleStartRequest);
 
             // Close transport
             if (transport != null) {
@@ -140,5 +138,10 @@ public class LocalizationServerHandler implements Runnable {
         } catch (Exception e) {
             logger.error("Error during handler cleanup", e);
         }
+    }
+
+    public static void shutdown() {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'shutdown'");
     }
 }

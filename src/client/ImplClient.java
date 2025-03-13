@@ -14,7 +14,8 @@ import shared.messages.SocketMessageTransport;
 
 public class ImplClient implements Runnable {
     private Socket socket;
-    private boolean connection = false;
+    private boolean connected = false;
+    private boolean authenticated = false;
     private Consumer<String> messageDisplay;
     private String username;
     private String password;
@@ -26,11 +27,9 @@ public class ImplClient implements Runnable {
     private SocketMessageTransport transport;
     private Logger logger;
 
-    public ImplClient(Socket socket, MessageBus messageBus, Logger logger) {
+    public ImplClient(Socket socket, Logger logger) {
         this.socket = socket;
         this.logger = logger;
-        this.messageBus = messageBus;
-        this.transport = new SocketMessageTransport(socket, messageBus, logger);
 
         this.clientId = "Client-"
                 + socket.getLocalAddress().getHostAddress()
@@ -47,17 +46,43 @@ public class ImplClient implements Runnable {
     public void run() {
         // At this point, the client has connected to the localization server
         try {
+
+            userInput = new Scanner(System.in);
             setupMessageTransport();
             startConnection();
-            // Keep the thread alive while connected
-            while (connection && !socket.isClosed()) {
+
+            while (connected
+                    && !authenticated
+                    && !socket.isClosed()) {
                 try {
-                    System.out.println("Hello there :)");
+                    // Read user input
+                    boolean messageProcessed = transport.readMessage();
                     Thread.sleep(1000);
+                    if (!messageProcessed) {
+                        connected = false;
+                    }
 
                 } catch (InterruptedException e) {
                     logger.debug("Client thread interrupted");
                 }
+            }
+
+            while (connected
+                    && authenticated
+                    && !socket.isClosed()) {
+                try {
+                    // Read user input
+                    System.out.println("Enter your option: ");
+                    String message = userInput.nextLine();
+                    sendMessage(MessageType.DATA_REQUEST, message);
+
+                    Thread.sleep(1000);
+
+                } catch (InterruptedException e) {
+                    logger.debug("Client thread interrupted");
+                    shutdown();
+                }
+
             }
 
             scanner.close();
@@ -94,7 +119,7 @@ public class ImplClient implements Runnable {
     }
 
     public void sendMessage(String type, String message) {
-        if (connection) {
+        if (connected) {
             Message msg = new Message(
                     type,
                     clientId,
@@ -103,6 +128,31 @@ public class ImplClient implements Runnable {
             sendMessage(msg);
         } else {
             logger.error("Cannot send message - connection is closed");
+        }
+    }
+
+    private void setupMessageTransport() {
+
+        String clientComponent = "Client-"
+                + socket.getInetAddress().getHostAddress()
+                + ":"
+                + socket.getLocalPort();
+
+        messageBus = new MessageBus(clientComponent, logger);
+        transport = new SocketMessageTransport(socket, messageBus, logger);
+
+        try {
+            // Subscribe to relevant message types
+            messageBus.subscribe(MessageType.START_RESPONSE, this::handleStartResponse);
+            messageBus.subscribe(MessageType.LOGOUT_RESPONSE, this::handleLogoutResponse);
+            messageBus.subscribe(MessageType.AUTH_RESPONSE, this::handleAuthResponse);
+            messageBus.subscribe(MessageType.DATA_RESPONSE, this::handleDataResponse);
+            messageBus.subscribe(MessageType.ERROR, this::handleErrorMessage);
+            // Adicione um novo tipo de mensagem aqui
+
+            connected = true;
+        } catch (Exception e) {
+            logger.error("Error in message transport setup", e);
         }
     }
 
@@ -115,34 +165,75 @@ public class ImplClient implements Runnable {
 
             // DO NOT close the scanner as it would close System.in
             // scanner.close();
-            connection = true;
+            connected = true;
 
         } catch (Exception e) {
             logger.error("Connection error", e);
-            connection = false;
+            connected = false;
         }
     }
 
-    // Message handlers
-    private void setupMessageTransport() {
+    public void startAuth() {
         try {
+            logger.info("Authenticating with server...");
+            // Set up updated message bus component name
+            messageBus.setComponentName(clientId);
+            sendMessage(MessageType.AUTH_REQUEST, username + ":" + password);
 
-            // Subscribe to relevant message types
-            messageBus.subscribe(MessageType.AUTH_RESPONSE, this::handleAuthResponse);
-            messageBus.subscribe(MessageType.DATA_RESPONSE, this::handleChatMessage);
-            messageBus.subscribe(MessageType.START_RESPONSE, this::handleServerInfo);
-            messageBus.subscribe(MessageType.ERROR, this::handleErrorMessage);
-            // Adicione um novo tipo de mensagem aqui
-
-            connection = true;
-            // Wait until disconnected
+            System.out.println("Enter your username: ");
+            username = userInput.nextLine();
+            System.out.println("Enter your password: ");
+            password = userInput.nextLine();
+            // DO NOT close the scanner as it would close System.in
+            // scanner.close();
+            authenticated = true;
 
         } catch (Exception e) {
-            logger.error("Error in message transport setup", e);
+            logger.error("Authentication error", e);
+            authenticated = false;
+        }
+    }
+
+    private void handleStartResponse(Message message) {
+
+        logger.info("Handling START_RESPONSE message: {}", message);
+        // Only process messages meant for us
+        if (message.getRecipient() != null &&
+                message.getRecipient().equals(clientId)) {
+
+            Object payload = message.getPayload();
+            String[] response = (String[]) payload;
+            String applicationAddress = response[0];
+            int applicationPort = Integer.parseInt(response[1]);
+            logger.info(applicationAddress);
+
+            //get proxy server info, split using :
+
+            
+            logger.info("Start response: " + message);
+
+            // change to proxy socket
+            try {
+                socket.setReuseAddress(connected);
+                socket.close();
+                Socket socketProxy = new Socket(applicationAddress, applicationPort);
+                socket = socketProxy;
+
+                logger.info("Connected to server: {} ({})", message);
+            } catch (Exception e) {
+                logger.error("Failed to connect to server", e);
+            }
+
+            // Display to user if handler is set
+            // if (messageDisplay != null) {
+            //     messageDisplay.accept(response);
+            // }
         }
     }
 
     private void handleAuthResponse(Message message) {
+
+        logger.info("Handling AUTH_RESPONSE message: {}", message);
         // Only process messages meant for us
         if (message.getRecipient() != null &&
                 message.getRecipient().equals(clientId)) {
@@ -151,7 +242,7 @@ public class ImplClient implements Runnable {
             logger.info("Authentication response: " + (success ? "Success" : "Failed"));
 
             if (!success) {
-                connection = false;
+                connected = false;
 
                 if (messageDisplay != null) {
                     messageDisplay.accept("Authentication failed. Please restart the client.");
@@ -164,32 +255,41 @@ public class ImplClient implements Runnable {
         }
     }
 
-    private void handleChatMessage(Message message) {
+    private void handleLogoutResponse(Message message) {
+        logger.info("Handling LOGOUT_RESPONSE message: {}", message);
         // Only process messages meant for us
         if (message.getRecipient() != null &&
                 message.getRecipient().equals(clientId)) {
 
-            String chatMsg = (String) message.getPayload();
-            logger.info("Chat message from server: " + chatMsg);
+            Boolean success = (Boolean) message.getPayload();
+            logger.info("Logout response: " + (success ? "Success" : "Failed"));
 
-            // Display to user if handler is set
-            if (messageDisplay != null) {
-                messageDisplay.accept("[" + message.getSender() + "]: " + chatMsg);
+            if (!success) {
+                connected = false;
+
+                if (messageDisplay != null) {
+                    messageDisplay.accept("Logout failed. Please restart the client.");
+                }
+            } else {
+                if (messageDisplay != null) {
+                    messageDisplay.accept("Successfully logged out.");
+                }
             }
         }
     }
 
-    private void handleServerInfo(Message message) {
+    private void handleDataResponse(Message message) {
+        logger.info("Handling DATA_RESPONSE message: {}", message);
         // Only process messages meant for us
         if (message.getRecipient() != null &&
                 message.getRecipient().equals(clientId)) {
 
-            String infoMsg = (String) message.getPayload();
-            logger.info("Server info: " + infoMsg);
+            String data = (String) message.getPayload();
+            logger.info("Data response: " + data);
 
             // Display to user if handler is set
             if (messageDisplay != null) {
-                messageDisplay.accept("[SERVER]: " + infoMsg);
+                messageDisplay.accept(data);
             }
         }
     }
@@ -215,7 +315,7 @@ public class ImplClient implements Runnable {
 
     public void shutdown() {
         try {
-            connection = false;
+            connected = false;
 
             // Send a disconnect message if possible
             if (messageBus != null && !socket.isClosed()) {

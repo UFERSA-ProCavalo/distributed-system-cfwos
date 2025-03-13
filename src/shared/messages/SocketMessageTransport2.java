@@ -3,11 +3,12 @@ package shared.messages;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 
 import shared.log.Logger;
 
-public class SocketMessageTransport {
+public class SocketMessageTransport2 implements Runnable {
     private final Socket socket;
     private final MessageBus messageBus;
     private final Logger logger;
@@ -16,17 +17,16 @@ public class SocketMessageTransport {
     private boolean running = true;
     private final boolean isServer;
 
-    public SocketMessageTransport(Socket socket, MessageBus messageBus, Logger logger) {
+    public SocketMessageTransport2(Socket socket, MessageBus messageBus, Logger logger) {
         this(socket, messageBus, logger, false);
     }
 
-    public SocketMessageTransport(Socket socket, MessageBus messageBus, Logger logger, Boolean isServer) {
+    public SocketMessageTransport2(Socket socket, MessageBus messageBus, Logger logger, boolean isServer) {
         this.socket = socket;
         this.messageBus = messageBus;
         this.logger = logger;
         this.isServer = isServer;
 
-        // Initialize the streams based on client/server role
         if (isServer) {
             try {
                 this.out = new ObjectOutputStream(socket.getOutputStream());
@@ -47,44 +47,44 @@ public class SocketMessageTransport {
         }
 
         logger.info("Socket transport initialized: " + socket);
+
     }
 
-    /**
-     * Read a message from the socket (blocking)
-     * @return true if a message was processed, false if connection closed
-     */
-    public boolean readMessage() {
-        if (!running || socket.isClosed()) {
-            return false;
-        }
-        
-        try {
-            Object obj = in.readObject();
-            
-            if (obj instanceof Message) {
+    @Override
+    public void run() {
+        while (running && !socket.isClosed()) {
+            try {
+                Object obj = in.readObject();
+                /*
+                 * Java 16 feature: Pattern Type Matching in instanceof
+                 * https://openjdk.java.net/jeps/394
+                 */
+                // if (obj instanceof Message message) {
                 // Forward received message to the message bus
-                Message message = (Message) obj;
-                logger.info("Received message: " + message);
-                messageBus.send(message);
-                return true;
-            } else {
-                logger.warning("Received non-message object: " + obj.getClass().getName());
-                return true;
+                if (obj instanceof Message) {
+                    // Forward received message to the message bus
+                    Message message = (Message) obj;
+                    logger.info("Received message: " + message);
+                    messageBus.send(message);
+
+                } else {
+                    logger.warning("Received non-message object: " + obj.getClass().getName());
+                }
+            } catch (IOException e) {
+                if (running) {
+                    logger.info("Socket connection closed");
+                }
+                running = false;
+            } catch (ClassNotFoundException e) {
+                logger.error("Error reading from socket: " + e.getMessage());
+            } catch (Exception e) {
+                logger.error("Unexpected error in transport", e);
+                running = false;
             }
-        } catch (IOException e) {
-            if (running) {
-                logger.info("Socket connection closed");
-            }
-            running = false;
-            return false;
-        } catch (ClassNotFoundException e) {
-            logger.error("Error reading from socket: " + e.getMessage());
-            return false;
-        } catch (Exception e) {
-            logger.error("Unexpected error in transport", e);
-            running = false;
-            return false;
         }
+
+        // Clean up
+        close();
     }
 
     /**
@@ -125,12 +125,5 @@ public class SocketMessageTransport {
         } catch (IOException e) {
             logger.error("Error closing socket", e);
         }
-    }
-    
-    /**
-     * Check if the transport is running
-     */
-    public boolean isRunning() {
-        return running && !socket.isClosed();
     }
 }

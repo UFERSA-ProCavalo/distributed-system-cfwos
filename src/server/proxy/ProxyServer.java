@@ -5,7 +5,6 @@ import java.net.Socket;
 
 import server.proxy.auth.AuthService;
 import shared.log.Logger;
-import shared.messages.*;
 
 public class ProxyServer {
     private ServerSocket serverSocket;
