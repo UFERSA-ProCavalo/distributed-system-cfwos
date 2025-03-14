@@ -4,13 +4,10 @@ import java.net.InetAddress;
 import java.net.Socket;
 
 import shared.log.Logger;
-import shared.messages.Message;
-import shared.messages.MessageBus;
-import shared.messages.MessageType;
-import shared.messages.SocketMessageTransport;
 
 public class Client {
     private final Logger logger = Logger.getLogger();
+    private final Boolean hide = true;
     private Socket socket;
     private InetAddress inet;
     private final String SERVER_IP = "localhost";
@@ -19,10 +16,9 @@ public class Client {
     private int clientId;
 
     public Client() {
+        System.out.println("\033[2J\033[1;1H"); // Clear screen
+        logger.setHideConsoleOutput(hide);
         this.clientId = 0;
-        // Initialize the message bus with this component's name
-        //this.messageBus = new MessageBus("Client", logger);
-
         // Subscribe to relevant message types
 
         // Add shutdown hook for cleanup
