@@ -5,7 +5,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public class Message implements Serializable {
-    // TODO Entender como funciona o Serializable e o que é serialVersionUID
+    // TODO Ler a documentação do Serializable e o que é serialVersionUID
     private static final long serialVersionUID = 1L;
 
     private final UUID id;

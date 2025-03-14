@@ -14,7 +14,6 @@ public class SocketMessageTransport {
     private ObjectOutputStream out;
     private ObjectInputStream in;
     private boolean running = true;
-    private final boolean isServer;
 
     public SocketMessageTransport(Socket socket, MessageBus messageBus, Logger logger) {
         this(socket, messageBus, logger, false);
@@ -24,8 +23,6 @@ public class SocketMessageTransport {
         this.socket = socket;
         this.messageBus = messageBus;
         this.logger = logger;
-        this.isServer = isServer;
-
         // Initialize the streams based on client/server role
         if (isServer) {
             try {
@@ -51,21 +48,21 @@ public class SocketMessageTransport {
 
     /**
      * Read a message from the socket (blocking)
+     * 
      * @return true if a message was processed, false if connection closed
      */
     public boolean readMessage() {
         if (!running || socket.isClosed()) {
             return false;
         }
-        
+
         try {
             Object obj = in.readObject();
-            
+
             if (obj instanceof Message) {
                 // Forward received message to the message bus
                 Message message = (Message) obj;
-                logger.info("Received message: " + message);
-                messageBus.send(message);
+                messageBus.receive(message);
                 return true;
             } else {
                 logger.warning("Received non-message object: " + obj.getClass().getName());
@@ -99,7 +96,7 @@ public class SocketMessageTransport {
         try {
             out.writeObject(message);
             out.flush();
-            logger.info("Sent message: " + message);
+            messageBus.send(message);
         } catch (IOException e) {
             logger.error("Failed to send message: " + e.getMessage());
             running = false;
@@ -118,15 +115,12 @@ public class SocketMessageTransport {
             if (in != null) {
                 in.close();
             }
-            if (socket != null && !socket.isClosed()) {
-                socket.close();
-                logger.info("Socket transport closed");
-            }
+
         } catch (IOException e) {
-            logger.error("Error closing socket", e);
+            logger.error("Error while closing transport: " + e.getMessage());
         }
     }
-    
+
     /**
      * Check if the transport is running
      */

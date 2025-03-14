@@ -1,4 +1,3 @@
-// src/shared/logging/LogType.java
 package shared.log;
 
 public enum LogType {

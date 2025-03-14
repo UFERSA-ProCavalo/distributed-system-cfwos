@@ -1,6 +1,7 @@
 package shared.messages;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,7 +12,6 @@ import shared.log.Logger;
 public class MessageBus {
 
     private final Logger logger;
-    private final Map<String, List<IMessageHandler>> handlers = new HashMap<>();
     private final Map<String, List<Consumer<Message>>> subscribers = new HashMap<>();
     private String componentName;
 
@@ -19,18 +19,6 @@ public class MessageBus {
         this.logger = logger;
         this.componentName = componentName;
         logger.info("MessageBus initialized for component: " + componentName);
-    }
-
-    /**
-     * Register a handler for specific message types
-     */
-    public void registerHandler(IMessageHandler handler) {
-        synchronized (handlers) {
-            for (String type : handler.getHandledTypes()) {
-                handlers.computeIfAbsent(type, k -> new ArrayList<>()).add(handler);
-                logger.info("Registered handler for message type: " + type);
-            }
-        }
     }
 
     /**
@@ -68,22 +56,20 @@ public class MessageBus {
      * Send a message synchronously (previously asynchronous)
      */
     public void send(Message message) {
+
         processMessage(message); // Now behaves like sendSync()
+        logger.info("Sent message: " + message);
 
     }
 
     /**
      * Send a message and wait for handlers to process it
      */
-    public void sendSync(Message message) {
-        processMessage(message);
-    }
+    public void receive(Message message) {
 
-    /**
-     * Create and send a new message
-     */
-    public void send(String type, String recipient, Object payload) {
-        send(new Message(type, componentName, recipient, payload));
+        logger.info("Received message: " + message);
+        processMessage(message); // Now behaves like sendSync()
+
     }
 
     private void processMessage(Message message) {
@@ -92,19 +78,12 @@ public class MessageBus {
         // First notify subscribers
         notifySubscribers(message);
 
-        // Then process with handlers if addressed to this component
-        if (componentName.equals(message.getRecipient()) ||
-                message.getRecipient() == null ||
-                message.getRecipient().isEmpty()) {
-
-            processWithHandlers(message);
-        }
     }
 
     private void notifySubscribers(Message message) {
         List<Consumer<Message>> typeSubscribers;
         synchronized (subscribers) {
-            typeSubscribers = subscribers.getOrDefault(message.getType(), List.of());
+            typeSubscribers = subscribers.getOrDefault(message.getType(), Collections.emptyList());
         }
 
         for (Consumer<Message> subscriber : typeSubscribers) {
@@ -112,26 +91,6 @@ public class MessageBus {
                 subscriber.accept(message);
             } catch (Exception e) {
                 logger.error("Error in message subscriber", e);
-            }
-        }
-    }
-
-    private void processWithHandlers(Message message) {
-        List<IMessageHandler> typeHandlers;
-        synchronized (handlers) {
-            typeHandlers = handlers.getOrDefault(message.getType(), List.of());
-        }
-
-        for (IMessageHandler handler : typeHandlers) {
-            if (handler.isValidMessage(message.getType())) {
-                try {
-                    Message response = handler.handleMessage(message);
-                    if (response != null) {
-                        send(response);
-                    }
-                } catch (Exception e) {
-                    logger.error("Error in message handler", e);
-                }
             }
         }
     }
@@ -153,5 +112,3 @@ public class MessageBus {
         return this.componentName = componentName;
     }
 }
-// Compare this snippet from src/server/server_proxy/ServerProxyHandler.java:
-// logger.info("ServerProxyHandler cleanup completed");

@@ -17,6 +17,8 @@ public final class MessageType {
     public static final String LOGOUT_RESPONSE = "LOGOUT_RESPONSE";
     public static final String DATA_RESPONSE = "DATA_RESPONSE";
 
+    public static final String SERVER_INFO = "SERVER_INFO";
+    public static final String DISCONNECT = "DISCONNECT";
     public static final String ERROR = "ERROR";
 
     public static String[] getAllTypes() {
