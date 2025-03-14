@@ -16,15 +16,24 @@ public class LocalizationServer {
     private static int activeConnections = 0;
 
     private static final String PROXY_IP = "localhost";
+    private static final String APPLICATION_IP = "localhost";
+
     private static final int PROXY_PORT = 22220;
     private static final int LOCALIZATION_PORT = 11110;
+    private static final int APPLICATION_PORT = 33330;
     private static final Logger logger = Logger.getLogger();
 
-    public LocalizationServer() {
+    static {
+        
+        serverAddresses = new HashMap<>();
+        serverAddresses.put("ApplicationProxy", "ProxyServer" + ":" + PROXY_IP + ":" + PROXY_PORT);
+        serverAddresses.put("Application", "ApplicationServer" + ":" + APPLICATION_IP + ":" + APPLICATION_PORT);
+    }
 
+    public LocalizationServer() {
+        System.out.println("\033[2J\033[1;1H"); // Clear screen
         logger.info("Starting server localization...");
 
-        serverAddresses = new HashMap<>();
         try {
             serverSocket = new ServerSocket(LOCALIZATION_PORT);
             logger.info("Localization Server started at: {}", serverSocket);
@@ -34,7 +43,6 @@ public class LocalizationServer {
         }
         // Set the server addresses
 
-        serverAddresses.put("Application", "ProxyServer" + ":" + PROXY_IP + ":" + PROXY_PORT);
         logger.info("Known addresses: {}", serverAddresses);
 
         // runtime shutdown hook

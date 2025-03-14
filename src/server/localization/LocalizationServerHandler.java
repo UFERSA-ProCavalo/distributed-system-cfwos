@@ -101,7 +101,7 @@ public class LocalizationServerHandler implements Runnable {
 
     private String[] getProxyServerInfo() {
         String[] server = new String[2];
-        String serverEntry = LocalizationServer.getServerAddresses().get("ProxyServer");
+        String serverEntry = LocalizationServer.getServerAddresses().get("ApplicationProxy");
 
         if (serverEntry != null) {
             String[] parts = serverEntry.split(":");
@@ -110,13 +110,11 @@ public class LocalizationServerHandler implements Runnable {
                 server[1] = parts[2]; // port
             } else {
                 // Default fallback
-                server[0] = "localhost";
-                server[1] = "11111";
+                logger.error("Invalid server entry: {}", serverEntry);
             }
         } else {
             // Default fallback
-            server[0] = "localhost";
-            server[1] = "11111";
+            logger.error("No server entry found for 'ApplicationServer'");
         }
 
         return server;
