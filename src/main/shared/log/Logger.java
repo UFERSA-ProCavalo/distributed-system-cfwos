@@ -274,40 +274,43 @@ public class Logger {
      */
     private void log(LogType level, String message) {
         // Ignora se abaixo dos limites de nível
-        if (level.getLevel() < consoleLogLevel.getLevel() &&
-                level.getLevel() < fileLogLevel.getLevel()) {
-            return;
-        }
 
-        // Formata a mensagem
-        String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
-        String threadName = Thread.currentThread().getName();
-
-        // Cria versão colorida para o console
-        String coloredMessage = String.format("%s[%s]%s %s[%s]%s %s[%s]%s [%s] %s",
-                ConsoleColors.BLUE, timestamp, ConsoleColors.RESET,
-                ConsoleColors.WHITE_BOLD, componentName, ConsoleColors.RESET,
-                getColorForLevel(level), level.getLabel(), ConsoleColors.RESET,
-                threadName, message);
-
-        // Cria versão simples para arquivo
-        String plainMessage = String.format("[%s] [%s] [%s] [%s] %s",
-                timestamp, componentName, level.getLabel(), threadName, message);
-
-        // Saída para console
-        if (!hideConsoleOutput && level.getLevel() >= consoleLogLevel.getLevel()) {
-            if (level == LogType.ERROR) {
-                System.err.println(coloredMessage);
-            } else {
-                System.out.println(coloredMessage);
+        synchronized (Logger.class) {
+            if (level.getLevel() < consoleLogLevel.getLevel() &&
+                    level.getLevel() < fileLogLevel.getLevel()) {
+                return;
             }
-        }
 
-        // Saída para arquivo (texto simples sem cores)
-        if (fileWriter != null && level.getLevel() >= fileLogLevel.getLevel()) {
-            synchronized (this) {
-                fileWriter.println(plainMessage);
-                fileWriter.flush();
+            // Formata a mensagem
+            String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
+            String threadName = Thread.currentThread().getName();
+
+            // Cria versão colorida para o console
+            String coloredMessage = String.format("%s[%s]%s %s[%s]%s %s[%s]%s [%s] %s",
+                    ConsoleColors.BLUE, timestamp, ConsoleColors.RESET,
+                    ConsoleColors.WHITE_BOLD, componentName, ConsoleColors.RESET,
+                    getColorForLevel(level), level.getLabel(), ConsoleColors.RESET,
+                    threadName, message);
+
+            // Cria versão simples para arquivo
+            String plainMessage = String.format("[%s] [%s] [%s] [%s] %s",
+                    timestamp, componentName, level.getLabel(), threadName, message);
+
+            // Saída para console
+            if (!hideConsoleOutput && level.getLevel() >= consoleLogLevel.getLevel()) {
+                if (level == LogType.ERROR) {
+                    System.err.println(coloredMessage);
+                } else {
+                    System.out.println(coloredMessage);
+                }
+            }
+
+            // Saída para arquivo (texto simples sem cores)
+            if (fileWriter != null && level.getLevel() >= fileLogLevel.getLevel()) {
+                synchronized (this) {
+                    fileWriter.println(plainMessage);
+                    fileWriter.flush();
+                }
             }
         }
     }

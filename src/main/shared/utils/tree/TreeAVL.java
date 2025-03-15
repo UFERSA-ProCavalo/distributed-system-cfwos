@@ -376,4 +376,66 @@ public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
         balanceCounter = 0;
     }
 
+    /**
+     * Retorna o conteúdo da árvore como uma string formatada (em ordem)
+     * 
+     * @param formatter Função para formatar cada item ao percorrer a árvore
+     * @return String formatada com todo o conteúdo da árvore
+     */
+    public String getFormattedContent(ItemFormatter<V> formatter) {
+        StringBuilder output = new StringBuilder();
+        output.append("=== Tree Content ===\n");
+
+        if (root == null) {
+            output.append("Empty tree\n");
+        } else {
+            appendInOrder(root, output, formatter);
+        }
+
+        output.append("=====================\n");
+        return output.toString();
+    }
+
+    /**
+     * Retorna o conteúdo da árvore como uma string formatada (em ordem reversa)
+     * 
+     * @param formatter Função para formatar cada item ao percorrer a árvore
+     * @return String formatada com todo o conteúdo da árvore em ordem reversa
+     */
+    public String getFormattedContentReverse(ItemFormatter<V> formatter) {
+        StringBuilder output = new StringBuilder();
+        output.append("=== Tree Content (Reverse) ===\n");
+
+        if (root == null) {
+            output.append("Empty tree\n");
+        } else {
+            appendReverseOrder(root, output, formatter);
+        }
+
+        output.append("==============================\n");
+        return output.toString();
+    }
+
+    /**
+     * Adiciona nós em ordem ao StringBuilder fornecido
+     */
+    private void appendInOrder(Node node, StringBuilder builder, ItemFormatter<V> formatter) {
+        if (node != null) {
+            appendInOrder(node.l, builder, formatter);
+            builder.append(formatter.format(node.val)).append("\n");
+            appendInOrder(node.r, builder, formatter);
+        }
+    }
+
+    /**
+     * Adiciona nós em ordem reversa ao StringBuilder fornecido
+     */
+    private void appendReverseOrder(Node node, StringBuilder builder, ItemFormatter<V> formatter) {
+        if (node != null) {
+            appendReverseOrder(node.r, builder, formatter);
+            builder.append(formatter.format(node.val)).append("\n");
+            appendReverseOrder(node.l, builder, formatter);
+        }
+    }
+
 }

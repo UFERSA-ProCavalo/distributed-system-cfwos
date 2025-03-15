@@ -181,4 +181,25 @@ public class CacheFIFO<V> {
             return metrics;
         }
     }
+
+    /**
+     * Returns a list of all WorkOrders in the cache using the
+     * shared.utils.list.LinkedList
+     * 
+     * @return List of WorkOrder objects
+     */
+    public List<WorkOrder> getAllWorkOrders() {
+        synchronized (lock) {
+            List<WorkOrder> workOrders = new ArrayList<>();
+            Node current = cache.getHead();
+            while (current != null) {
+                V value = (V) current.getData();
+                if (value instanceof WorkOrder) {
+                    workOrders.add((WorkOrder) value);
+                }
+                current = current.getNext();
+            }
+            return workOrders;
+        }
+    }
 }

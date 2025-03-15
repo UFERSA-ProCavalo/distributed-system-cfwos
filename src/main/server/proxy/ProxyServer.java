@@ -16,7 +16,7 @@ public class ProxyServer {
     private boolean running = true;
 
     // Cache compartilhada entre todos os handlers
-    private final CacheFIFO<WorkOrder> cache;
+    public static final CacheFIFO<WorkOrder> cache = new CacheFIFO<WorkOrder>();
 
     public static int connectionCount = 0;
     public static int activeConnections = 0;
@@ -27,7 +27,6 @@ public class ProxyServer {
         this.authService = AuthService.getInstance();
 
         // Inicializa o sistema de cache
-        this.cache = new CacheFIFO<WorkOrder>();
         logger.info("Sistema de cache inicializado com política FIFO");
 
         // Add shutdown hook for cleanup

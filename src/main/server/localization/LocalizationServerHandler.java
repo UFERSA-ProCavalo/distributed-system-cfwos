@@ -9,6 +9,7 @@ import main.shared.messages.MessageType;
 import main.shared.messages.SocketMessageTransport;
 
 public class LocalizationServerHandler implements Runnable {
+    private final Object lock = new Object();
     private boolean connected = true;
     private String clientId;
 
@@ -38,87 +39,97 @@ public class LocalizationServerHandler implements Runnable {
     }
 
     public void run() {
-        try {
-            setupMessageTransport();
-            logger.info("Waiting for client message...");
+        synchronized (lock) {
+            try {
+                setupMessageTransport();
+                logger.info("Waiting for client message...");
 
-            // Main message processing loop - single threaded
-            while (connected && transport.isRunning() && !clientSocket.isClosed()) {
-                // This will block until a message is available or connection closes
-                boolean messageProcessed = transport.readMessage();
+                // Main message processing loop - single threaded
+                while (connected && transport.isRunning() && !clientSocket.isClosed()) {
+                    // This will block until a message is available or connection closes
+                    boolean messageProcessed = transport.readMessage();
 
-                // If the message couldn't be processed (connection closed)
-                if (!messageProcessed) {
-                    connected = false;
+                    // If the message couldn't be processed (connection closed)
+                    if (!messageProcessed) {
+                        connected = false;
+                    }
                 }
-            }
 
-            logger.info("Client disconnected");
-        } catch (Exception e) {
-            logger.error("Error in client handler", e);
-        } finally {
-            cleanup();
+                logger.info("Client disconnected");
+            } catch (Exception e) {
+                logger.error("Error in client handler", e);
+            } finally {
+                cleanup();
+            }
         }
     }
 
     private void setupMessageTransport() {
-        String ServerComponent = "Server-"
-                + clientSocket.getInetAddress().getHostAddress()
-                + ":"
-                + clientSocket.getLocalPort();
+        synchronized (lock) {
+            String ServerComponent = "Server-"
+                    + clientSocket.getInetAddress().getHostAddress()
+                    + ":"
+                    + clientSocket.getLocalPort();
 
-        messageBus = new MessageBus(ServerComponent, logger);
-        transport = new SocketMessageTransport(clientSocket, messageBus, logger, true);
+            messageBus = new MessageBus(ServerComponent, logger);
+            transport = new SocketMessageTransport(clientSocket, messageBus, logger, true);
 
-        try {
-            // Subscribe to relevant message types
-            messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
-            // Adicione um novo tipo de mensagem aqui
-        } catch (Exception e) {
-            logger.error("Error in message transport setup", e);
+            try {
+                // Subscribe to relevant message types
+                messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
+                // Adicione um novo tipo de mensagem aqui
+            } catch (Exception e) {
+                logger.error("Error in message transport setup", e);
+            }
         }
     }
 
     private void handleStartRequest(Message message) {
-        try {
-            logger.info("Handling START_REQUEST message: {}", message);
+        synchronized (lock) {
 
-            String[] server = getProxyServerInfo();
+            try {
+                logger.info("Handling START_REQUEST message: {}", message);
 
-            // Respond with server information
-            Message response = new Message(
-                    MessageType.START_RESPONSE,
-                    messageBus.getComponentName(),
-                    message.getSender(),
-                    new String[] { server[0], server[1] });
+                String[] server = getProxyServerInfo();
 
-            transport.sendMessage(response);
-            logger.info("Sent proxy server info to client");
+                // Respond with server information
+                Message response = new Message(
+                        MessageType.START_RESPONSE,
+                        message.getRecipient(),
+                        message.getSender(),
+                        new String[] { server[0], server[1] });
 
-        } catch (Exception e) {
-            logger.error("Error handling START_REQUEST", e);
+                transport.sendMessage(response);
+                logger.info("Sent proxy server info to client");
+
+            } catch (Exception e) {
+                logger.error("Error handling START_REQUEST", e);
+            }
         }
     }
 
     private String[] getProxyServerInfo() {
-        String[] server = new String[2];
-        String serverEntry = LocalizationServer.getServerAddresses().get("ApplicationProxy");
+        synchronized (lock) {
 
-        if (serverEntry != null) {
-            String[] parts = serverEntry.split(":");
-            if (parts.length >= 3) {
-                server[0] = parts[1]; // host
-                server[1] = parts[2]; // port
+            String[] server = new String[2];
+            String serverEntry = LocalizationServer.getServerAddresses().get("ApplicationProxy");
+
+            if (serverEntry != null) {
+                String[] parts = serverEntry.split(":");
+                if (parts.length >= 3) {
+                    server[0] = parts[1]; // host
+                    server[1] = parts[2]; // port
+                } else {
+                    // Default fallback
+                    logger.error("Invalid server entry: {}", serverEntry);
+                }
             } else {
                 // Default fallback
-                logger.error("Invalid server entry: {}", serverEntry);
+                logger.error("No server entry found for 'ApplicationServer'");
             }
-        } else {
-            // Default fallback
-            logger.error("No server entry found for 'ApplicationServer'");
-        }
 
-        return server;
+            return server;
+        }
     }
 
     private void cleanup() {

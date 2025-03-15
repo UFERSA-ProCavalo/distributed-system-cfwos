@@ -3,8 +3,10 @@ package main.client.gui;
 import java.util.Scanner;
 
 import main.client.ImplClient;
+import main.server.proxy.ProxyServer;
 import main.shared.log.Logger;
 import main.shared.messages.MessageType;
+import main.shared.models.WorkOrder;
 
 public class ConsoleMenu {
     private final ImplClient client;
@@ -42,7 +44,6 @@ public class ConsoleMenu {
         try {
             char choice = scanner.next().charAt(0);
             scanner.nextLine(); // Consume newline
-            System.out.println("\033[2J\033[1;1H"); // Clear screen
 
             switch (choice) {
                 case '1': // Add work order
@@ -67,12 +68,31 @@ public class ConsoleMenu {
                     logger.info("Exiting application...");
                     running = false;
                     break;
+                case '9':
+                    logger.info("Inserting 60 work orders in database...");
+                    insert60inDatabase();
+                    break;
+                case '0':
+                    logger.info("Inserting 20 work orders in cache...");
+                    insert20inCache();
+                    break;
                 default:
                     logger.info("Invalid option. Please try again.");
                     break;
             }
+            System.out.println("\033[2J\033[1;1H"); // Clear screen
         } catch (Exception e) {
             logger.error("Error processing menu choice: {}", e.getMessage());
+        }
+    }
+
+    private void insert60inDatabase() {
+        client.sendMessage(MessageType.DATA_REQUEST, String.format("ADD60"));
+    }
+
+    private void insert20inCache() {
+        for (int i = 0; i < 20; i++) {
+            client.sendMessage(MessageType.DATA_REQUEST, String.format("ADD20"));
         }
     }
 

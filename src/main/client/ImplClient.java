@@ -13,19 +13,21 @@ import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
 import main.shared.messages.MessageType;
 import main.shared.messages.SocketMessageTransport;
+import main.shared.utils.StringUtil;
 import main.shared.utils.TypeUtil;
 
 public class ImplClient implements Runnable {
+    private static final Object lock = new Object();
     private Socket socket;
-    private boolean connected = false;
+    private boolean connected = true;
     private boolean authenticated = false;
-    private Consumer<String> messageDisplay;
     private String username;
     private String password;
     private Scanner userInput;
     private ConsoleMenu consoleMenu;
     private String clientId;
     private boolean testing = false; // FLAG PARA TESTAR
+    private int loginTries = 0;
 
     private MessageBus messageBus = null;
     private SocketMessageTransport transport = null;
@@ -40,10 +42,7 @@ public class ImplClient implements Runnable {
         this.socket = socket;
         this.logger = logger;
 
-        this.clientId = "Client-"
-                + socket.getLocalAddress().getHostAddress()
-                + ":"
-                + socket.getLocalPort();
+        this.clientId = "Client-" + Thread.currentThread().getName();
 
         logger.debug("ImplClient initialized with socket: " + socket);
         logger.info("Client ID set: {}", clientId);
@@ -57,10 +56,12 @@ public class ImplClient implements Runnable {
 
     public void run() {
         // At this point, the client has connected to the localization server
-        try {
-            setupMessageTransport();
-            startConnection();
 
+        try {
+            synchronized (lock) {
+                setupMessageTransport();
+                startConnection();
+            }
             // Wait for localization server response and redirection
             while (connected && !authenticated && !socket.isClosed()) {
                 try {
@@ -76,9 +77,13 @@ public class ImplClient implements Runnable {
                         // Skip startAuth to avoid scanner input
                         continue;
                     }
-                    logger.info("Please authenticate:");
+
+                    System.out.println("\n=== Welcome to the Distributed System Client ===");
+                    System.out.println(StringUtil.repeat("=", 48));
+                    System.out.println("Please authenticate to continue.");
+                    System.out.println("\nLogin attempts: " + loginTries + "/3");
                     startAuth();
-                    System.out.println("\033[2J\033[1;1H"); // Clear screen
+
                 } catch (Exception e) {
                     logger.error("Client thread interrupted", e);
                     break;
@@ -114,6 +119,7 @@ public class ImplClient implements Runnable {
             }
 
             logger.info("Connection ended.");
+
         } catch (Exception e) {
             logger.error("Error in client connection", e);
         } finally {
@@ -123,111 +129,121 @@ public class ImplClient implements Runnable {
     }
 
     private void setupMessageTransport() {
+        synchronized (lock) {
+            String clientComponent = "Client-"
+                    + socket.getInetAddress().getHostAddress()
+                    + ":"
+                    + socket.getLocalPort();
 
-        String clientComponent = "Client-"
-                + socket.getInetAddress().getHostAddress()
-                + ":"
-                + socket.getLocalPort();
+            if (messageBus == null) {
+                messageBus = new MessageBus(clientComponent, logger);
 
-        if (messageBus == null) {
-            messageBus = new MessageBus(clientComponent, logger);
+                messageBus.subscribe(MessageType.START_RESPONSE, this::handleStartResponse);
+                messageBus.subscribe(MessageType.LOGOUT_RESPONSE, this::handleLogoutResponse);
+                messageBus.subscribe(MessageType.AUTH_RESPONSE, this::handleAuthResponse);
+                messageBus.subscribe(MessageType.DATA_RESPONSE, this::handleDataResponse);
+                messageBus.subscribe(MessageType.SERVER_INFO, this::handleServerInfo);
+                messageBus.subscribe(MessageType.ERROR, this::handleErrorMessage);
+                messageBus.subscribe(MessageType.DISCONNECT, this::handleDisconnect);
+            }
+            if (transport == null) {
+                transport = new SocketMessageTransport(socket, messageBus, logger);
+            }
 
-            messageBus.subscribe(MessageType.START_RESPONSE, this::handleStartResponse);
-            messageBus.subscribe(MessageType.LOGOUT_RESPONSE, this::handleLogoutResponse);
-            messageBus.subscribe(MessageType.AUTH_RESPONSE, this::handleAuthResponse);
-            messageBus.subscribe(MessageType.DATA_RESPONSE, this::handleDataResponse);
-            messageBus.subscribe(MessageType.SERVER_INFO, this::handleServerInfo);
-            messageBus.subscribe(MessageType.ERROR, this::handleErrorMessage);
+            // logger.warning("Transport should not be running, something is going to
+            // break");
+            // logger.warning("Socket: {}", socket);
+            // logger.warning("Transport: {}", transport);
+
+            connected = true;
         }
-        if (transport == null) {
-            transport = new SocketMessageTransport(socket, messageBus, logger);
-        }
-
-        // logger.warning("Transport should not be running, something is going to
-        // break");
-        // logger.warning("Socket: {}", socket);
-        // logger.warning("Transport: {}", transport);
-
-        connected = true;
     }
 
     public void startConnection() {
-        try {
-            logger.info("Connecting to localization server...");
-            // Set up updated message bus component name
-            messageBus.setComponentName(clientId);
-            sendMessage("START_REQUEST", "Ask for connection");
+        synchronized (lock) {
+            try {
+                logger.info("Connecting to localization server...");
+                // Set up updated message bus component name
+                messageBus.setComponentName(clientId);
 
-            // DO NOT close the scanner as it would close System.in
-            // scanner.close();
+                // Set connected to true BEFORE sending the message
+                connected = true;
 
-            connected = true;
+                // Now send the message
+                sendMessage("START_REQUEST", "Ask for connection");
 
-        } catch (Exception e) {
-            logger.error("Connection error", e);
-            connected = false;
+            } catch (Exception e) {
+                logger.error("Connection error", e);
+                connected = false;
+            }
         }
     }
 
     public void startAuth() {
-        try {
-            System.out.println("Enter your username: ");
-            username = userInput.nextLine();
-            System.out.println("Enter your password: ");
-            password = userInput.nextLine();
+        synchronized (lock) {
+            if (loginTries > 3) {
+                System.out.println("Too many login attempts , closing connection ...");
+                connected = false;
+                shutdown();
 
-            sendMessage(MessageType.AUTH_REQUEST, new String[] { username, password });
-        } catch (Exception e) {
-            logger.error("Authentication error", e);
-            authenticated = false;
+            }
+            try {
+                System.out.println("Enter your username: ");
+                username = userInput.nextLine();
+                System.out.println("Enter your password: ");
+                password = userInput.nextLine();
+                System.out.println("\033[2J\033[1;1H"); // Clear screen
+
+                sendMessage(MessageType.AUTH_REQUEST, new String[] { username, password });
+
+                loginTries++;
+            } catch (Exception e) {
+                logger.error("Authentication error", e);
+                authenticated = false;
+            }
         }
     }
 
     private void handleStartResponse(Message message) {
+        synchronized (lock) {
+            logger.info("Handling START_RESPONSE from {} : {}", message.getSender(), message.getPayload());
+            // Only process messages meant for us
+            if (message.getRecipient() != null &&
+                    message.getRecipient().equals(clientId)) {
 
-        logger.info("Handling START_RESPONSE message: {}", message);
-        // Only process messages meant for us
-        if (message.getRecipient() != null &&
-                message.getRecipient().equals(clientId)) {
+                Object payload = message.getPayload();
+                String[] response = (String[]) payload;
+                // change to proxy socket
+                redirect(response);
 
-            Object payload = message.getPayload();
-            String[] response = (String[]) payload;
-            // change to proxy socket
-            redirect(response);
-
-            // Display to user if handler is set
-            // if (messageDisplay != null) {
-            // messageDisplay.accept(response);
-            // }
+            }
         }
     }
 
     private void handleAuthResponse(Message message) {
+        synchronized (lock) {
 
-        logger.info("Handling AUTH_RESPONSE message: {}", message);
-        // Only process messages meant for us
-        if (message.getRecipient() != null &&
-                message.getRecipient().equals(clientId)) {
+            logger.info("Handling AUTH_RESPONSE message: {}", message.getPayload());
+            // Only process messages meant for us
+            if (message.getRecipient() != null &&
+                    message.getRecipient().equals(clientId)) {
 
-            Boolean success = (Boolean) message.getPayload();
-            logger.info("Authentication response: " + (success ? "Success" : "Failed"));
+                Boolean success = message.getPayload().equals("success");
 
-            if (!success) {
-                connected = false;
+                logger.info("Authentication response: " + (success ? "Success" : "Failed"));
 
-                if (messageDisplay != null) {
-                    messageDisplay.accept("Authentication failed. Please restart the client.");
-                    return;
+                if (!success) {
+                    if (loginTries >= 3) {
+                        connected = false;
+                    }
+
+                } else {
+                    authenticated = success;
+                    loginTries = 0;
                 }
             } else {
-                if (messageDisplay != null) {
-                    messageDisplay.accept("Successfully logged in as " + username);
-                    return;
-                }
+                logger.error("Authentication response message not meant for this client");
             }
-            authenticated = success;
-        } else {
-            logger.error("Authentication response message not meant for this client");
         }
     }
 
@@ -242,56 +258,51 @@ public class ImplClient implements Runnable {
 
             if (!success) {
                 connected = false;
-
-                if (messageDisplay != null) {
-                    messageDisplay.accept("Logout failed. Please restart the client.");
-                }
             } else {
-                if (messageDisplay != null) {
-                    messageDisplay.accept("Successfully logged out.");
-                }
+                authenticated = false;
             }
         }
     }
 
     private void handleDataResponse(Message message) {
-        logger.info("Handling DATA_RESPONSE message: {}", message);
+        synchronized (lock) {
+            logger.info("Handling DATA_RESPONSE message from {}: {}", message.getSender(), message.getPayload());
 
-        // Only process messages meant for us
-        if (message.getRecipient() != null &&
-                message.getRecipient().equals(clientId)) {
+            // Only process messages meant for us
+            if (message.getRecipient() != null &&
+                    message.getRecipient().equals(clientId)) {
 
-            Object payload = message.getPayload();
+                Object payload = message.getPayload();
 
-            if (payload instanceof Map<?, ?>) {
-                Map<?, ?> responseMap = (Map<?, ?>) payload;
+                if (payload instanceof Map<?, ?>) {
+                    Map<?, ?> responseMap = (Map<?, ?>) payload;
 
-                // First display cache info if present
-                if (responseMap.containsKey("cacheInfo")) {
-                    String cacheInfo = (String) responseMap.get("cacheInfo");
-                    System.out.println(cacheInfo);
-                }
-
-                // Then display the main response
-                System.out.println("\n=== Response ===");
-
-                // Display status if present
-                if (responseMap.containsKey("status")) {
-                    System.out.println("Status: " + responseMap.get("status"));
-                }
-
-                // Display other fields, excluding cacheInfo
-                for (Map.Entry<?, ?> entry : responseMap.entrySet()) {
-                    String key = entry.getKey().toString();
-                    if (!key.equals("cacheInfo") && !key.equals("status")) {
-                        System.out.println(key + ": " + entry.getValue());
+                    // First display cache info if present
+                    if (responseMap.containsKey("cacheInfo")) {
+                        String cacheInfo = (String) responseMap.get("cacheInfo");
+                        System.out.println(cacheInfo);
                     }
-                }
 
-                System.out.println("================\n");
-            } else {
-                // Handle simple string responses
-                System.out.println("\n=== Response ===\n" + payload + "\n================\n");
+                    // Then display the main response
+                    System.out.println("\n=== Response ===");
+
+                    // Display status if present
+                    if (responseMap.containsKey("status")) {
+                        System.out.println("Status: " + responseMap.get("status"));
+                    }
+
+                    // Display other fields, excluding cacheInfo
+                    for (Map.Entry<?, ?> entry : responseMap.entrySet()) {
+                        String key = entry.getKey().toString();
+                        if (!key.equals("cacheInfo") && !key.equals("status")) {
+                            System.out.println(key + ": " + entry.getValue());
+                        }
+                    }
+                    System.out.println(StringUtil.repeat("=", 16));
+                } else {
+                    // Handle simple string responses
+                    System.out.println("\n=== Response ===\n" + payload + "\n" + StringUtil.repeat("=", 16) + "\n");
+                }
             }
         }
     }
@@ -302,12 +313,24 @@ public class ImplClient implements Runnable {
                 message.getRecipient().equals(clientId)) {
 
             String errorMsg = (String) message.getPayload();
+            System.out.println("[ERROR]: " + errorMsg);
             logger.error("Server error: " + errorMsg);
 
-            // Display to user if handler is set
-            if (messageDisplay != null) {
-                messageDisplay.accept("[ERROR]: " + errorMsg);
-            }
+        }
+    }
+
+    // Force disconnected by the server
+    // For example: too many login tries
+    private void handleDisconnect(Message message) {
+        // Only process messages meant for us
+        if (message.getRecipient() != null &&
+                message.getRecipient().equals(clientId)) {
+
+            String errorMsg = (String) message.getPayload();
+            System.out.println("[ERROR]: " + errorMsg);
+            logger.error("Server error: " + errorMsg);
+            connected = false;
+
         }
     }
 
@@ -317,12 +340,9 @@ public class ImplClient implements Runnable {
                 message.getRecipient().equals(clientId)) {
 
             String serverInfo = (String) message.getPayload();
+            System.out.println(serverInfo);
             logger.info("Server info: " + serverInfo);
 
-            // Display to user if handler is set
-            if (messageDisplay != null) {
-                messageDisplay.accept(serverInfo);
-            }
         } else {
             logger.error("Server info message not meant for this client");
         }
@@ -338,15 +358,17 @@ public class ImplClient implements Runnable {
     }
 
     public void sendMessage(String type, Object message) {
-        if (connected) {
-            Message msg = new Message(
-                    type,
-                    clientId,
-                    "Server-" + socket.getInetAddress().getHostAddress() + ":" + socket.getPort(),
-                    message);
-            sendMessage(msg);
-        } else {
-            logger.error("Cannot send message - connection is closed");
+        synchronized (lock) {
+            if (connected) {
+                Message msg = new Message(
+                        type,
+                        clientId,
+                        "Server",
+                        message);
+                sendMessage(msg);
+            } else {
+                logger.error("Cannot send message - connection is closed");
+            }
         }
     }
 
@@ -394,7 +416,7 @@ public class ImplClient implements Runnable {
                 Message logoutMsg = new Message(
                         MessageType.LOGOUT_REQUEST,
                         clientId,
-                        "Server-" + socket.getInetAddress().getHostAddress() + ":" + socket.getPort(),
+                        "Server",
                         "Client shutting down");
 
                 // Send directly through transport to ensure delivery

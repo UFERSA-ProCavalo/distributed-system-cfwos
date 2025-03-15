@@ -270,5 +270,18 @@ public class LinkedList<V> implements ILinkedList<V> {
         return head;
     }
 
+    // getAll
+    public V[] getAll() {
+        @SuppressWarnings("unchecked")
+        V[] array = (V[]) new Object[size];
+        Node t = head;
+        int i = 0;
+        while (t != null) {
+            array[i] = t.data;
+            t = t.next;
+            i++;
+        }
+        return array;
+    }
 
 }

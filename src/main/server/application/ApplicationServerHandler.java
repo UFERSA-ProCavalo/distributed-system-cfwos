@@ -15,6 +15,7 @@ import main.shared.models.WorkOrder;
 public class ApplicationServerHandler implements Runnable {
     private boolean connected = true;
     private final String clientId;
+    private String server = "AppServer";
 
     private final Socket clientSocket;
     private final Logger logger;
@@ -24,6 +25,7 @@ public class ApplicationServerHandler implements Runnable {
     // Singleton database instance - shared across all handlers
     private static final Database database;
     // Thread safety for database operations
+    private static final Object lock = new Object();
     private static final Object databaseLock = new Object();
 
     // Initialize database
@@ -86,88 +88,105 @@ public class ApplicationServerHandler implements Runnable {
     }
 
     private void handleDataRequest(Message message) {
-        try {
-            logger.info("Handling DATA_REQUEST message from {}: {}", message.getSender(), message.getPayload());
-
-            Map<String, String> response = new HashMap<>();
-            String operation = null;
-
-            // Get the thread name/id for debugging
-            String threadInfo = Thread.currentThread().getName() + "-" + Thread.currentThread().getId();
-            logger.info("[{}] Requesting database lock", threadInfo);
-
-            // Log the time it takes to acquire the lock
-            long startLock = System.currentTimeMillis();
-
-            synchronized (databaseLock) {
-                long lockTime = System.currentTimeMillis() - startLock;
-                logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
-
-                if (message.getPayload() == null) {
-                    throw new IllegalArgumentException("Request payload cannot be null");
-                }
-
-                String[] requestParts = message.getPayload().toString().split("\\|");
-                operation = requestParts[0].toUpperCase();
-
-                // Process the data request using the database
-                switch (operation) {
-                    case "ADD":
-                        handleAddOperation(requestParts, response);
-                        break;
-                    case "REMOVE":
-                        handleRemoveOperation(requestParts, response);
-                        break;
-                    case "UPDATE":
-                        handleUpdateOperation(requestParts, response);
-                        break;
-                    case "SEARCH":
-                        handleSearchOperation(requestParts, response);
-                        break;
-                    case "STATS":
-                        handleStatsOperation(response);
-                        break;
-                    case "SHOW":
-                        handleShowOperation(requestParts, response);
-                        break;
-                    default:
-                        response.put("status", "error");
-                        response.put("message", "Unknown operation: " + operation);
-                }
-
-                logger.info("[{}] Finished database operation", threadInfo);
-            }
-
-            // Create response message
-            Message responseMsg = new Message(
-                    MessageType.DATA_RESPONSE,
-                    messageBus.getComponentName(),
-                    message.getSender(),
-                    response);
-
-            transport.sendMessage(responseMsg);
-            logger.info("Sent data response to client for operation: {}", operation);
-
-        } catch (Exception e) {
-            logger.error("Error handling DATA_REQUEST", e);
-
-            // Send error message back to client
+        synchronized (lock) {
             try {
-                Map<String, String> errorResponse = new HashMap<>();
-                errorResponse.put("status", "error");
-                errorResponse.put("message", e.getMessage());
+                logger.info("Handling DATA_REQUEST message from {}: {}", message.getSender(), message.getPayload());
 
-                Message errorMsg = new Message(
+                Map<String, String> response = new HashMap<>();
+                String operation = null;
+
+                // Get the thread name/id for debugging
+                String threadInfo = Thread.currentThread().getName() + "-" + Thread.currentThread().getId();
+                logger.info("[{}] Requesting database lock", threadInfo);
+
+                // Log the time it takes to acquire the lock
+                long startLock = System.currentTimeMillis();
+
+                synchronized (databaseLock) {
+                    long lockTime = System.currentTimeMillis() - startLock;
+                    logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
+
+                    if (message.getPayload() == null) {
+                        throw new IllegalArgumentException("Request payload cannot be null");
+                    }
+
+                    String[] requestParts = message.getPayload().toString().split("\\|");
+                    operation = requestParts[0].toUpperCase();
+
+                    // Process the data request using the database
+                    switch (operation) {
+                        case "ADD":
+                            handleAddOperation(requestParts, response);
+                            break;
+                        case "REMOVE":
+                            handleRemoveOperation(requestParts, response);
+                            break;
+                        case "UPDATE":
+                            handleUpdateOperation(requestParts, response);
+                            break;
+                        case "SEARCH":
+                            handleSearchOperation(requestParts, response);
+                            break;
+                        case "STATS":
+                            handleStatsOperation(response);
+                            break;
+                        case "SHOW":
+                            handleShowOperation(requestParts, response);
+                            break;
+                        case "ADD60":
+                            add60toDatabase(response);
+                            break;
+                        case "TESTE":
+                            // handleTesteOperation(response);
+                        default:
+                            response.put("status", "error");
+                            response.put("message", "Unknown operation: " + operation);
+                    }
+
+                    logger.info("[{}] Finished database operation", threadInfo);
+                }
+
+                // Create response message
+                Message responseMsg = new Message(
                         MessageType.DATA_RESPONSE,
-                        messageBus.getComponentName(),
+                        message.getRecipient(),
                         message.getSender(),
-                        errorResponse);
+                        response);
 
-                transport.sendMessage(errorMsg);
-            } catch (Exception ex) {
-                logger.error("Failed to send error response", ex);
+                transport.sendMessage(responseMsg);
+                logger.info("Sent data response to client for operation: {}", operation);
+
+            } catch (Exception e) {
+                logger.error("Error handling DATA_REQUEST", e);
+
+                // Send error message back to client
+                try {
+                    Map<String, String> errorResponse = new HashMap<>();
+                    errorResponse.put("status", "error");
+                    errorResponse.put("message", e.getMessage());
+
+                    Message errorMsg = new Message(
+                            MessageType.DATA_RESPONSE,
+                            message.getRecipient(),
+                            message.getSender(),
+                            errorResponse);
+
+                    transport.sendMessage(errorMsg);
+                } catch (Exception ex) {
+                    logger.error("Failed to send error response", ex);
+                }
             }
         }
+    }
+
+    private void add60toDatabase(Map<String, String> response) {
+        for (int i = 0; i < 60; i++) {
+            database.addWorkOrder(i, "name" + i, "description" + i);
+
+        }
+        response.put("status", "success");
+        response.put("message", "60 work orders added successfully");
+
     }
 
     private void handleAddOperation(String[] requestParts, Map<String, String> response) {
@@ -240,9 +259,8 @@ public class ApplicationServerHandler implements Runnable {
             response.put("description", workOrder.getDescription());
             response.put("timestamp", workOrder.getTimestamp());
         } else {
-            response.put("status", "not_found");
+            response.put("status", "error");
             response.put("message", "Work order not found");
-            response.put("code", String.valueOf(code));
         }
     }
 
@@ -258,18 +276,26 @@ public class ApplicationServerHandler implements Runnable {
         // Format: SHOW|[REVERSE]
         boolean reverse = requestParts.length > 1 && "REVERSE".equalsIgnoreCase(requestParts[1]);
 
-        // Since database.show methods print to console, we can't capture output
-        // directly
-        // Instead, we'll just confirm the operation was performed
+        // Obter representação em string do banco de dados
+        String databaseContent;
+
         if (reverse) {
-            database.showDatabaseReverse();
-            response.put("message", "Database shown in reverse order (check server console)");
+            databaseContent = database.getDatabaseContentReverse();
+            response.put("message", "Database content in reverse order");
         } else {
-            database.showDatabase();
-            response.put("message", "Database shown in order (check server console)");
+            databaseContent = database.getDatabaseContent();
+            response.put("message", "Database content in order");
         }
 
         response.put("status", "success");
+        response.put("database_content", databaseContent);
+
+        // Ainda mantém o registro no console do servidor
+        if (reverse) {
+            database.showDatabaseReverse();
+        } else {
+            database.showDatabase();
+        }
     }
 
     private void cleanup() {

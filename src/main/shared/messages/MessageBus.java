@@ -58,7 +58,8 @@ public class MessageBus {
     public void send(Message message) {
 
         processMessage(message); // Now behaves like sendSync()
-        logger.info("Sent message: " + message);
+        logger.info("Sent message from {} to {} content: {}", message.getSender(), message.getRecipient(),
+                message.getPayload());
 
     }
 
