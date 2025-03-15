@@ -25,7 +25,6 @@ public class ApplicationServerHandler implements Runnable {
     // Singleton database instance - shared across all handlers
     private static final Database database;
     // Thread safety for database operations
-    private static final Object lock = new Object();
     private static final Object databaseLock = new Object();
 
     // Initialize database
@@ -53,12 +52,10 @@ public class ApplicationServerHandler implements Runnable {
             setupMessageTransport();
             logger.info("Application handler ready for client requests...");
 
-            // Main message processing loop
-            while (connected && transport.isRunning() && !clientSocket.isClosed()) {
-                boolean messageProcessed = transport.readMessage();
-
-                if (!messageProcessed) {
-                    connected = false;
+            // Simplify the loop condition
+            while (transport.isRunning() && !clientSocket.isClosed()) {
+                if (!transport.readMessage()) {
+                    break; // Exit loop instead of using connected flag
                 }
             }
 
@@ -88,7 +85,8 @@ public class ApplicationServerHandler implements Runnable {
     }
 
     private void handleDataRequest(Message message) {
-        synchronized (lock) {
+        // Use only one lock
+        synchronized (databaseLock) {
             try {
                 logger.info("Handling DATA_REQUEST message from {}: {}", message.getSender(), message.getPayload());
 
@@ -102,49 +100,47 @@ public class ApplicationServerHandler implements Runnable {
                 // Log the time it takes to acquire the lock
                 long startLock = System.currentTimeMillis();
 
-                synchronized (databaseLock) {
-                    long lockTime = System.currentTimeMillis() - startLock;
-                    logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
+                long lockTime = System.currentTimeMillis() - startLock;
+                logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
 
-                    if (message.getPayload() == null) {
-                        throw new IllegalArgumentException("Request payload cannot be null");
-                    }
-
-                    String[] requestParts = message.getPayload().toString().split("\\|");
-                    operation = requestParts[0].toUpperCase();
-
-                    // Process the data request using the database
-                    switch (operation) {
-                        case "ADD":
-                            handleAddOperation(requestParts, response);
-                            break;
-                        case "REMOVE":
-                            handleRemoveOperation(requestParts, response);
-                            break;
-                        case "UPDATE":
-                            handleUpdateOperation(requestParts, response);
-                            break;
-                        case "SEARCH":
-                            handleSearchOperation(requestParts, response);
-                            break;
-                        case "STATS":
-                            handleStatsOperation(response);
-                            break;
-                        case "SHOW":
-                            handleShowOperation(requestParts, response);
-                            break;
-                        case "ADD60":
-                            add60toDatabase(response);
-                            break;
-                        case "TESTE":
-                            // handleTesteOperation(response);
-                        default:
-                            response.put("status", "error");
-                            response.put("message", "Unknown operation: " + operation);
-                    }
-
-                    logger.info("[{}] Finished database operation", threadInfo);
+                if (message.getPayload() == null) {
+                    throw new IllegalArgumentException("Request payload cannot be null");
                 }
+
+                String[] requestParts = message.getPayload().toString().split("\\|");
+                operation = requestParts[0].toUpperCase();
+
+                // Process the data request using the database
+                switch (operation) {
+                    case "ADD":
+                        handleAddOperation(requestParts, response);
+                        break;
+                    case "REMOVE":
+                        handleRemoveOperation(requestParts, response);
+                        break;
+                    case "UPDATE":
+                        handleUpdateOperation(requestParts, response);
+                        break;
+                    case "SEARCH":
+                        response = handleSearchOperation(requestParts);
+                        break;
+                    case "STATS":
+                        handleStatsOperation(response);
+                        break;
+                    case "SHOW":
+                        handleShowOperation(requestParts, response);
+                        break;
+                    case "ADD60":
+                        add60toDatabase(response);
+                        break;
+                    case "TESTE":
+                        // handleTesteOperation(response);
+                    default:
+                        response.put("status", "error");
+                        response.put("message", "Unknown operation: " + operation);
+                }
+
+                logger.info("[{}] Finished database operation", threadInfo);
 
                 // Create response message
                 Message responseMsg = new Message(
@@ -155,52 +151,55 @@ public class ApplicationServerHandler implements Runnable {
 
                 transport.sendMessage(responseMsg);
                 logger.info("Sent data response to client for operation: {}", operation);
-
             } catch (Exception e) {
-                logger.error("Error handling DATA_REQUEST", e);
-
-                // Send error message back to client
-                try {
-                    Map<String, String> errorResponse = new HashMap<>();
-                    errorResponse.put("status", "error");
-                    errorResponse.put("message", e.getMessage());
-
-                    Message errorMsg = new Message(
-                            MessageType.DATA_RESPONSE,
-                            message.getRecipient(),
-                            message.getSender(),
-                            errorResponse);
-
-                    transport.sendMessage(errorMsg);
-                } catch (Exception ex) {
-                    logger.error("Failed to send error response", ex);
-                }
+                logger.error("Error handling data request", e);
+                sendErrorResponse(message, "Error processing request: " + e.getMessage());
             }
         }
-    }
-
-    private void add60toDatabase(Map<String, String> response) {
-        for (int i = 0; i < 60; i++) {
-            database.addWorkOrder(i, "name" + i, "description" + i);
-
-        }
-        response.put("status", "success");
-        response.put("message", "60 work orders added successfully");
-
     }
 
     private void handleAddOperation(String[] requestParts, Map<String, String> response) {
         // Format: ADD|code|name|description|timestamp
         if (requestParts.length < 4) {
-            throw new IllegalArgumentException("ADD operation requires at least code, name, and description");
+            response.put("status", "error");
+            response.put("message", "ADD operation requires at least code, name, and description");
+            return;
         }
 
-        int code = Integer.parseInt(requestParts[1]);
+        Integer code = parseCodeParam(requestParts[1], response);
+        if (code == null) {
+            return;
+        }
+
+        // Verificar se o código já existe
+        WorkOrder existing = database.searchWorkOrder(code);
+        if (existing != null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " already exists");
+            return;
+        }
+
         String name = requestParts[2];
+        if (name == null || name.trim().isEmpty()) {
+            response.put("status", "error");
+            response.put("message", "Name cannot be empty");
+            return;
+        }
+
         String description = requestParts[3];
+        if (description == null || description.trim().isEmpty()) {
+            response.put("status", "error");
+            response.put("message", "Description cannot be empty");
+            return;
+        }
 
         if (requestParts.length >= 5) {
             String timestamp = requestParts[4];
+            if (timestamp == null || timestamp.trim().isEmpty() || !isValidTimestamp(timestamp)) {
+                response.put("status", "error");
+                response.put("message", "Invalid timestamp format. Use YYYY-MM-DD");
+                return;
+            }
             database.addWorkOrder(code, name, description, timestamp);
         } else {
             database.addWorkOrder(code, name, description);
@@ -214,10 +213,24 @@ public class ApplicationServerHandler implements Runnable {
     private void handleRemoveOperation(String[] requestParts, Map<String, String> response) {
         // Format: REMOVE|code
         if (requestParts.length < 2) {
-            throw new IllegalArgumentException("REMOVE operation requires a code");
+            response.put("status", "error");
+            response.put("message", "REMOVE operation requires a code");
+            return;
         }
 
-        int code = Integer.parseInt(requestParts[1]);
+        Integer code = parseCodeParam(requestParts[1], response);
+        if (code == null) {
+            return;
+        }
+
+        // Verificar se o item existe antes de remover
+        WorkOrder existingOrder = database.searchWorkOrder(code);
+        if (existingOrder == null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " not found");
+            return;
+        }
+
         database.removeWorkOrder(code);
 
         response.put("status", "success");
@@ -228,13 +241,44 @@ public class ApplicationServerHandler implements Runnable {
     private void handleUpdateOperation(String[] requestParts, Map<String, String> response) {
         // Format: UPDATE|code|name|description|timestamp
         if (requestParts.length < 5) {
-            throw new IllegalArgumentException("UPDATE operation requires code, name, description, and timestamp");
+            response.put("status", "error");
+            response.put("message", "UPDATE operation requires code, name, description, and timestamp");
+            return;
         }
 
-        int code = Integer.parseInt(requestParts[1]);
+        Integer code = parseCodeParam(requestParts[1], response);
+        if (code == null) {
+            return;
+        }
+
+        // Verificar se o item existe antes de atualizar
+        WorkOrder existingOrder = database.searchWorkOrder(code);
+        if (existingOrder == null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " not found");
+            return;
+        }
+
         String name = requestParts[2];
+        if (name == null || name.trim().isEmpty()) {
+            response.put("status", "error");
+            response.put("message", "Name cannot be empty");
+            return;
+        }
+
         String description = requestParts[3];
+        if (description == null || description.trim().isEmpty()) {
+            response.put("status", "error");
+            response.put("message", "Description cannot be empty");
+            return;
+        }
+
         String timestamp = requestParts[4];
+        if (timestamp == null || timestamp.trim().isEmpty() || !isValidTimestamp(timestamp)) {
+            response.put("status", "error");
+            response.put("message", "Invalid timestamp format. Use YYYY-MM-DD");
+            return;
+        }
 
         database.updateWorkOrder(code, name, description, timestamp);
 
@@ -243,25 +287,60 @@ public class ApplicationServerHandler implements Runnable {
         response.put("code", String.valueOf(code));
     }
 
-    private void handleSearchOperation(String[] requestParts, Map<String, String> response) {
+    private Map<String, String> handleSearchOperation(String[] requestParts) {
+        Map<String, String> response = new HashMap<>();
         // Format: SEARCH|code
         if (requestParts.length < 2) {
-            throw new IllegalArgumentException("SEARCH operation requires a code");
-        }
-
-        int code = Integer.parseInt(requestParts[1]);
-        WorkOrder workOrder = database.searchWorkOrder(code);
-
-        if (workOrder != null) {
-            response.put("status", "success");
-            response.put("code", String.valueOf(workOrder.getCode()));
-            response.put("name", workOrder.getName());
-            response.put("description", workOrder.getDescription());
-            response.put("timestamp", workOrder.getTimestamp());
-        } else {
             response.put("status", "error");
-            response.put("message", "Work order not found");
+            response.put("message", "SEARCH operation requires a code");
+            return response;
         }
+
+        Integer code = parseCodeParam(requestParts[1], response);
+        if (code == null) {
+            return response;
+        }
+
+        WorkOrder order = database.searchWorkOrder(code);
+        if (order == null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " not found");
+            return response;
+        }
+
+        response.put("status", "success");
+        response.put("message", "Work order found");
+        response.put("code", String.valueOf(order.getCode()));
+        response.put("name", order.getName());
+        response.put("description", order.getDescription());
+        response.put("timestamp", order.getTimestamp());
+
+        return response;
+    }
+
+    // Método auxiliar para validar formato de data
+    private boolean isValidTimestamp(String timestamp) {
+        // Simple regex check for YYYY-MM-DD format
+        return timestamp.matches("\\d{4}-\\d{2}-\\d{2}");
+    }
+
+    // Também precisamos modificar o add60toDatabase para evitar conflitos
+    private void add60toDatabase(Map<String, String> response) {
+        int successCount = 0;
+        int offset = 0; // Tentaremos adicionar começando do código 0
+
+        // Tentar adicionar 60 work orders
+        while (successCount < 60) {
+            if (database.searchWorkOrder(offset) == null) {
+                // Código disponível, adicionar
+                database.addWorkOrder(offset, "name" + offset, "description" + offset);
+                successCount++;
+            }
+            offset++;
+        }
+
+        response.put("status", "success");
+        response.put("message", "60 work orders added successfully");
     }
 
     private void handleStatsOperation(Map<String, String> response) {
@@ -314,6 +393,40 @@ public class ApplicationServerHandler implements Runnable {
             logger.info("Handler cleanup completed for client {}", clientId);
         } catch (Exception e) {
             logger.error("Error during handler cleanup", e);
+        }
+    }
+
+    private void sendErrorResponse(Message requestMessage, String errorMessage) {
+        try {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("status", "error");
+            errorResponse.put("message", errorMessage);
+
+            Message errorMsg = new Message(
+                    MessageType.DATA_RESPONSE,
+                    requestMessage.getRecipient(),
+                    requestMessage.getSender(),
+                    errorResponse);
+
+            transport.sendMessage(errorMsg);
+        } catch (Exception ex) {
+            logger.error("Failed to send error response", ex);
+        }
+    }
+
+    private Integer parseCodeParam(String codeStr, Map<String, String> response) {
+        try {
+            int code = Integer.parseInt(codeStr);
+            if (code < 0) {
+                response.put("status", "error");
+                response.put("message", "Code must be a positive integer");
+                return null;
+            }
+            return code;
+        } catch (NumberFormatException e) {
+            response.put("status", "error");
+            response.put("message", "Invalid code format: " + codeStr + " is not a valid integer");
+            return null;
         }
     }
 }
