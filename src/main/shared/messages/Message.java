@@ -9,13 +9,13 @@ public class Message implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final UUID id;
-    private final String type;
+    private final MessageType type;
     private final Instant timestamp;
     private final String sender;
     private final String recipient;
     private final Object payload;
 
-    public Message(String type, String sender, String recipient, Object payload) {
+    public Message(MessageType type, String sender, String recipient, Object payload) {
         this.id = UUID.randomUUID();
         this.type = type;
         this.timestamp = Instant.now();
@@ -28,7 +28,7 @@ public class Message implements Serializable {
         return id;
     }
 
-    public String getType() {
+    public MessageType getType() {
         return type;
     }
 

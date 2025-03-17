@@ -44,17 +44,12 @@ public class ProxyServerHandler implements Runnable {
         this.logger = logger;
         this.cache = workOrderCache;
 
-        synchronized (ProxyServerHandler.class) {
-            ProxyServer.connectionCount++;
-            ProxyServer.activeConnections++;
-        }
-
         logger.info("New client handler created. ConnectionCount: {}, ActiveConnections: {}",
                 ProxyServer.connectionCount, ProxyServer.activeConnections);
 
         // Setup client message bus and transport
         synchronized (lock) {
-            connectToApplicationServer();
+            // connectToApplicationServer();
             setupClientMessageTransport();
         }
     }
@@ -77,7 +72,10 @@ public class ProxyServerHandler implements Runnable {
 
                 // If authenticated, keep handler alive as long as the client is connected
                 if (authenticated) {
+                    if (applicationTransport == null) {
+                        connectToApplicationServer();
 
+                    }
                     while (connected && !clientSocket.isClosed()) {
                         // Process messages between client and application server
                         boolean clientMessageProcessed = clientTransport.readMessage();
@@ -96,11 +94,10 @@ public class ProxyServerHandler implements Runnable {
                         }
 
                         // Small pause to prevent CPU hogging
-                        Thread.sleep(20);
+                        // Thread.sleep(20);
                     }
                 }
             }
-
         } catch (Exception e) {
             logger.error("Error in client handler", e);
         } finally {
@@ -213,19 +210,16 @@ public class ProxyServerHandler implements Runnable {
                             success ? "success" : "failed");
                     clientTransport.sendMessage(response);
 
-                    // Send response back to the client
-                    response = new Message(
-                            MessageType.AUTH_RESPONSE,
-                            clientMessageBus.getComponentName(),
-                            message.getSender(),
-                            response);
-
                     clientTransport.sendMessage(response);
 
                     if (success) {
                         logger.info("Client {} authenticated successfully", message.getSender());
                         authenticated = true;
                         loginTries = 0;
+
+                        if (applicationTransport == null) {
+                            connectToApplicationServer();
+                        }
                     } else {
                         loginTries++;
                     }
@@ -447,6 +441,7 @@ public class ProxyServerHandler implements Runnable {
                     responseMapOpt.ifPresent(responseMap -> {
                         // Existing cache update logic...
                         if ("success".equals(responseMap.get("status")) &&
+                                "Work order found".equals(responseMap.get("message")) &&
                                 responseMap.containsKey("code") &&
                                 responseMap.containsKey("name") &&
                                 responseMap.containsKey("description")) {
@@ -568,9 +563,8 @@ public class ProxyServerHandler implements Runnable {
                     applicationSocket.close();
                 }
 
-                synchronized (ProxyServerHandler.class) {
-                    ProxyServer.activeConnections--;
-                }
+                // Notify the ProxyServer that a client has disconnected
+                ProxyServer.clientDisconnected();
 
                 logger.info("Client disconnected: {}. Active connections: {}",
                         Thread.currentThread().getName(), ProxyServer.activeConnections);

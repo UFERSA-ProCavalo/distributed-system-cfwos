@@ -3,21 +3,22 @@ package main.client.gui;
 import java.util.Scanner;
 
 import main.client.ImplClient;
-import main.server.proxy.ProxyServer;
+import main.client.MenuState;
 import main.shared.log.Logger;
 import main.shared.messages.MessageType;
-import main.shared.models.WorkOrder;
 
 public class ConsoleMenu {
     private final ImplClient client;
     private final Scanner scanner;
     private final Logger logger;
     private boolean running = true;
+    private MenuState menuState = MenuState.LOGIN;
 
     public ConsoleMenu(ImplClient client, Scanner scanner, Logger logger) {
         this.client = client;
         this.scanner = scanner;
         this.logger = logger;
+        client.setConsoleMenu(this);
     }
 
     public boolean isRunning() {
@@ -29,6 +30,37 @@ public class ConsoleMenu {
     }
 
     public void displayMenu() {
+        System.out.println("\033[2J\033[1;1H"); // Clear screen
+
+        switch (menuState) {
+            case LOGIN:
+                displayLoginMenu();
+                break;
+            case MAIN_MENU:
+                displayMainMenu();
+                break;
+            case WORK_ORDER_MENU:
+                // Currently unused, could be implemented for advanced work order operations
+                displayMainMenu(); // Fall back to main menu
+                break;
+        }
+    }
+
+    public void displayLoginMenu() {
+        System.out.println("\n===== Client Login =====");
+        System.out.println("Please enter your credentials:");
+        System.out.println("Login attempts: " + client.getLoginTries().get() + "/3");
+
+        // Start authentication flow
+        String[] credentials = getCredentials();
+        if (credentials != null) {
+            client.sendMessage(MessageType.AUTH_REQUEST, credentials);
+        }
+    }
+
+    public void displayMainMenu() {
+        System.out.println("\n===== Work Order Management System =====");
+        System.out.println("Connected to: " + client.getServerAddress());
         System.out.println("\nClient Menu:");
         System.out.println("[1]. Add Work Order");
         System.out.println("[2]. Remove Work Order");
@@ -36,12 +68,27 @@ public class ConsoleMenu {
         System.out.println("[4]. Search Work Order");
         System.out.println("[5]. Show all Work Orders");
         System.out.println("[6]. Show Database Stats");
-        System.out.println("[7]. Exit");
-        System.out.print("Choose an option: ");
+        System.out.println("[7]. Logout");
+        System.out.println("[8]. Exit");
+        System.out.println("[0]. Insert 20 sample work orders to cache");
+        System.out.println("[9]. Insert 60 sample work orders to database");
+        System.out.print("\nChoose an option: ");
+    }
+
+    // Called by message handlers to redisplay the prompt after processing
+    public void displayPrompt() {
+        if (menuState == MenuState.MAIN_MENU) {
+            System.out.print("\nChoose an option: ");
+        }
     }
 
     public void processMenuChoice() {
         try {
+            // Only process menu choices in MAIN_MENU state
+            if (menuState != MenuState.MAIN_MENU) {
+                return;
+            }
+
             char choice = scanner.next().charAt(0);
             scanner.nextLine(); // Consume newline
 
@@ -64,35 +111,51 @@ public class ConsoleMenu {
                 case '6': // Show stats
                     client.sendMessage(MessageType.DATA_REQUEST, "STATS");
                     break;
-                case '7': // Exit
+                case '7': // Logout
+                    client.sendMessage(MessageType.LOGOUT_REQUEST, true);
+                    break;
+                case '8': // Exit
                     logger.info("Exiting application...");
                     running = false;
+                    client.shutdown();
                     break;
-                case '9':
+                case '9': // Insert 60 in database
                     logger.info("Inserting 60 work orders in database...");
-                    insert60inDatabase();
+                    client.sendMessage(MessageType.DATA_REQUEST, "ADD60");
                     break;
-                case '0':
+                case '0': // Insert 20 in cache
                     logger.info("Inserting 20 work orders in cache...");
-                    insert20inCache();
+                    client.sendMessage(MessageType.DATA_REQUEST, "ADD20");
                     break;
                 default:
                     logger.info("Invalid option. Please try again.");
+                    displayMainMenu();
                     break;
             }
-            System.out.println("\033[2J\033[1;1H"); // Clear screen
         } catch (Exception e) {
             logger.error("Error processing menu choice: {}", e.getMessage());
+            displayPrompt();
         }
     }
 
-    private void insert60inDatabase() {
-        client.sendMessage(MessageType.DATA_REQUEST, String.format("ADD60"));
-    }
+    // Returns username and password as String array
+    public String[] getCredentials() {
+        try {
+            System.out.print("Username: ");
+            String username = scanner.nextLine().trim();
 
-    private void insert20inCache() {
-        for (int i = 0; i < 20; i++) {
-            client.sendMessage(MessageType.DATA_REQUEST, String.format("ADD20"));
+            System.out.print("Password: ");
+            String password = scanner.nextLine().trim();
+
+            if (username.isEmpty() || password.isEmpty()) {
+                logger.error("Username and password cannot be empty");
+                return null;
+            }
+
+            return new String[] { username, password };
+        } catch (Exception e) {
+            logger.error("Error getting credentials: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -113,6 +176,7 @@ public class ConsoleMenu {
 
         } catch (NumberFormatException e) {
             logger.error("Invalid code format: " + e.getMessage());
+            displayPrompt();
         }
     }
 
@@ -127,6 +191,7 @@ public class ConsoleMenu {
 
         } catch (NumberFormatException e) {
             logger.error("Invalid code format: " + e.getMessage());
+            displayPrompt();
         }
     }
 
@@ -143,11 +208,12 @@ public class ConsoleMenu {
 
             // Format: UPDATE|code|name|description|timestamp
             String request = String.format("UPDATE|%d|%s|%s|%s",
-                    code, name, description, java.time.LocalDateTime.now().toString());
+                    code, name, description, java.time.LocalDate.now().toString());
             client.sendMessage(MessageType.DATA_REQUEST, request);
 
         } catch (NumberFormatException e) {
             logger.error("Invalid code format: " + e.getMessage());
+            displayPrompt();
         }
     }
 
@@ -162,6 +228,15 @@ public class ConsoleMenu {
 
         } catch (NumberFormatException e) {
             logger.error("Invalid code format: " + e.getMessage());
+            displayPrompt();
         }
+    }
+
+    public void setMenuState(MenuState state) {
+        this.menuState = state;
+    }
+
+    public MenuState getMenuState() {
+        return menuState;
     }
 }

@@ -5,86 +5,128 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import main.shared.log.Logger;
 
 public class MessageBus {
-
+    // Thread pool for message processing
+    private final ExecutorService messageProcessorPool;
     private final Logger logger;
-    private final Map<String, List<Consumer<Message>>> subscribers = new HashMap<>();
+    // Changed from String to MessageType
+    private final Map<MessageType, List<Consumer<Message>>> subscribers = new HashMap<>();
     private String componentName;
+    private boolean shutdownRequested = false;
 
     public MessageBus(String componentName, Logger logger) {
+        this(componentName, logger, Runtime.getRuntime().availableProcessors());
+    }
+
+    public MessageBus(String componentName, Logger logger, int threadPoolSize) {
         this.logger = logger;
         this.componentName = componentName;
-        logger.info("MessageBus initialized for component: " + componentName);
+        this.messageProcessorPool = Executors.newFixedThreadPool(threadPoolSize);
+        logger.info("MessageBus initialized for component: {} with {} threads",
+                componentName, threadPoolSize);
     }
 
     /**
-     * Subscribe to a specific message type
+     * Subscribe to a message type
      */
-    public void subscribe(String messageType, Consumer<Message> callback) {
-        synchronized (subscribers) {
-            if (messageType.equals("*")) {
-                for (String type : MessageType.getAllTypes()) {
-                    subscribers.computeIfAbsent(type, k -> new ArrayList<>()).add(callback);
-                }
-                subscribers.computeIfAbsent("*", k -> new ArrayList<>()).add(callback);
-                logger.warning("Added wildcard subscription for all message types");
-            } else {
-                subscribers.computeIfAbsent(messageType, k -> new ArrayList<>()).add(callback);
-                logger.info("Added subscription for message type: " + messageType);
-            }
-        }
+    public void subscribe(MessageType type, Consumer<Message> handler) {
+        subscribers.computeIfAbsent(type, k -> new ArrayList<>()).add(handler);
     }
 
     /**
      * Unsubscribe from a specific message type
      */
-    public void unsubscribe(String messageType, Consumer<Message> callback) {
+    public void unsubscribe(MessageType messageType, Consumer<Message> callback) {
         synchronized (subscribers) {
             List<Consumer<Message>> callbacks = subscribers.get(messageType);
             if (callbacks != null) {
                 callbacks.remove(callback);
-                logger.info("Removed subscription for message type: " + messageType);
+                logger.info("Removed subscription for message type: {}", messageType);
+            }
+        }
+    }
+
+    public void unsubscribeAll() {
+        synchronized (subscribers) {
+            subscribers.clear();
+            logger.info("Removed all subscriptions");
+        }
+    }
+
+    /**
+     * Send a message asynchronously
+     */
+    public void send(Message message) {
+        if (shutdownRequested) {
+            logger.warning("MessageBus is shutting down, message discarded: {}", message);
+            return;
+        }
+
+        messageProcessorPool.submit(() -> {
+            try {
+                logger.info("Processing outgoing message: {} from {} to {}",
+                        message.getType(), message.getSender(), message.getRecipient());
+                // No need to process outgoing messages
+            } catch (Exception e) {
+                logger.error("Error processing outgoing message", e);
+            }
+        });
+    }
+
+    /**
+     * Publish a message to subscribers
+     */
+    public void publish(Message message) {
+        if (message == null || message.getType() == null)
+            return;
+
+        List<Consumer<Message>> handlers = subscribers.get(message.getType());
+        if (handlers != null) {
+            for (Consumer<Message> handler : handlers) {
+                messageProcessorPool.execute(() -> {
+                    try {
+                        handler.accept(message);
+                    } catch (Exception e) {
+                        logger.error("Error processing message: {}", e.getMessage());
+                    }
+                });
             }
         }
     }
 
     /**
-     * Send a message synchronously (previously asynchronous)
-     */
-    public void send(Message message) {
-
-        processMessage(message); // Now behaves like sendSync()
-        logger.info("Sent message from {} to {} content: {}", message.getSender(), message.getRecipient(),
-                message.getPayload());
-
-    }
-
-    /**
-     * Send a message and wait for handlers to process it
+     * Process a received message asynchronously
      */
     public void receive(Message message) {
+        if (shutdownRequested) {
+            logger.warning("MessageBus is shutting down, message discarded: {}", message);
+            return;
+        }
 
-        logger.info("Received message: " + message);
-        processMessage(message); // Now behaves like sendSync()
-
-    }
-
-    private void processMessage(Message message) {
-        logger.info("Processing message: " + message);
-
-        // First notify subscribers
-        notifySubscribers(message);
-
+        messageProcessorPool.submit(() -> {
+            try {
+                logger.info("Processing incoming message: {} from {} to {}",
+                        message.getType(), message.getSender(), message.getRecipient());
+                notifySubscribers(message);
+            } catch (Exception e) {
+                logger.error("Error processing incoming message", e);
+            }
+        });
     }
 
     private void notifySubscribers(Message message) {
         List<Consumer<Message>> typeSubscribers;
         synchronized (subscribers) {
-            typeSubscribers = subscribers.getOrDefault(message.getType(), Collections.emptyList());
+            typeSubscribers = new ArrayList<>(
+                    subscribers.getOrDefault(message.getType(), Collections.emptyList()));
+
         }
 
         for (Consumer<Message> subscriber : typeSubscribers) {
@@ -97,19 +139,36 @@ public class MessageBus {
     }
 
     /**
-     * Shutdown the message bus (No longer needed, but kept for API compatibility)
+     * Set the component name
      */
-    public void shutdown() {
-        logger.info("MessageBus shutdown for component: " + componentName);
-    }
-
-    public String getComponentName() {
-        return componentName;
-    }
-
-    // Added for testing purposes
-    // TODO refactor in a way that doesn't expose the setter
     public String setComponentName(String componentName) {
         return this.componentName = componentName;
+    }
+
+    /**
+     * Shutdown the message bus gracefully
+     */
+    public void shutdown() {
+        shutdownRequested = true;
+
+        try {
+            logger.info("Shutting down MessageBus thread pool...");
+            messageProcessorPool.shutdown();
+            if (!messageProcessorPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                logger.warning("MessageBus thread pool did not terminate in time, forcing shutdown");
+                messageProcessorPool.shutdownNow();
+            }
+            logger.info("MessageBus thread pool shut down successfully");
+        } catch (InterruptedException e) {
+            logger.error("MessageBus shutdown interrupted", e);
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Get the component name
+     */
+    public String getComponentName() {
+        return componentName;
     }
 }

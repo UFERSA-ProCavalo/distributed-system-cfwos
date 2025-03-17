@@ -1,6 +1,7 @@
 package main.server.localization;
 
 import java.net.Socket;
+import java.util.concurrent.TimeUnit;
 
 import main.shared.log.Logger;
 import main.shared.messages.Message;
@@ -8,150 +9,277 @@ import main.shared.messages.MessageBus;
 import main.shared.messages.MessageType;
 import main.shared.messages.SocketMessageTransport;
 
+/**
+ * Handler for client connections to the localization server
+ */
 public class LocalizationServerHandler implements Runnable {
-    private final Object lock = new Object();
-    private boolean connected = true;
-    private String clientId;
-
     private final Socket clientSocket;
+    private final String clientId;
+    private final LocalizationServer server;
     private final Logger logger;
-    private MessageBus messageBus;
+
     private SocketMessageTransport transport;
+    private MessageBus messageBus;
+    private volatile boolean connected = true;
+    private volatile boolean messageProcessed = false;
+    private static final long CONNECTION_TIMEOUT_MS = 30000; // 30 seconds timeout
 
-    public LocalizationServerHandler(Socket clientSocket, Logger logger) {
-        this.clientSocket = clientSocket;
-        this.logger = logger;
-
-        this.clientId = "Client-"
-                + clientSocket.getInetAddress().getHostAddress()
-                + ":"
-                + clientSocket.getPort();
-        logger.info("ImplClient initialized with socket: " + clientSocket);
-
-        logger.info("New client connected: {}:{}",
-                clientSocket.getInetAddress().getHostAddress(),
-                clientSocket.getPort());
-
-        logger.info("Client connected: {}:{}",
-                clientSocket.getInetAddress().getHostAddress(),
-                clientSocket.getPort());
-
+    /**
+     * Create a new handler for a client connection
+     */
+    public LocalizationServerHandler(Socket socket, String clientId, LocalizationServer server) {
+        this.clientSocket = socket;
+        this.clientId = clientId;
+        this.server = server;
+        this.logger = server.getLogger();
     }
 
-    public void run() {
-        synchronized (lock) {
-            try {
-                setupMessageTransport();
-                logger.info("Waiting for client message...");
+    /**
+     * Get client ID
+     */
+    public String getClientId() {
+        return clientId;
+    }
 
-                // Main message processing loop - single threaded
-                while (connected && transport.isRunning() && !clientSocket.isClosed()) {
-                    // This will block until a message is available or connection closes
-                    boolean messageProcessed = transport.readMessage();
+    /**
+     * Get the message transport
+     */
+    public SocketMessageTransport getTransport() {
+        return transport;
+    }
 
-                    // If the message couldn't be processed (connection closed)
-                    if (!messageProcessed) {
-                        connected = false;
-                    }
-                }
+    /**
+     * Check if this handler's connection is still active
+     */
+    public boolean isConnected() {
+        return connected && transport != null && !clientSocket.isClosed();
+    }
 
-                logger.info("Client disconnected");
-            } catch (Exception e) {
-                logger.error("Error in client handler", e);
-            } finally {
-                cleanup();
+    /**
+     * Send a message through this handler
+     */
+    public void sendMessage(Message message) {
+        try {
+            if (transport != null) {
+                transport.sendMessage(message);
             }
+        } catch (Exception e) {
+            logger.error("Error sending message through handler", e);
         }
     }
 
-    private void setupMessageTransport() {
-        synchronized (lock) {
-            String ServerComponent = "Server-"
-                    + clientSocket.getInetAddress().getHostAddress()
-                    + ":"
-                    + clientSocket.getLocalPort();
+    @Override
+    public void run() {
+        try {
+            setupCommunication();
 
-            messageBus = new MessageBus(ServerComponent, logger);
+            while (connected && !messageProcessed) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error in client handler", e);
+        } finally {
+            if (!messageProcessed) {
+                logger.warning("Client {} connection timed out", clientId);
+            }
+            close();
+        }
+    }
+
+    /**
+     * Set up message transport and handlers
+     */
+    private void setupCommunication() {
+        try {
+            // Create message bus for this handler
+            messageBus = new MessageBus("LocalizationHandler-" + clientId, logger);
             transport = new SocketMessageTransport(clientSocket, messageBus, logger, true);
 
-            try {
-                // Subscribe to relevant message types
-                messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
-                // Adicione um novo tipo de mensagem aqui
-            } catch (Exception e) {
-                logger.error("Error in message transport setup", e);
-            }
+            // Subscribe to message types
+            messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
+            messageBus.subscribe(MessageType.RECONNECT, this::handleReconnectRequest);
+            messageBus.subscribe(MessageType.DISCONNECT, this::handleDisconnect);
+
+            // Add handler for proxy registration requests
+            messageBus.subscribe(MessageType.PROXY_REGISTRATION_REQUEST, this::handleProxyRegistration);
+
+            logger.debug("Communication setup complete for client {}", clientId);
+        } catch (Exception e) {
+            logger.error("Failed to set up communication for client {}", clientId, e);
+            connected = false;
         }
     }
 
+    /**
+     * Handle initial connection request - redirect to a proxy server
+     */
     private void handleStartRequest(Message message) {
-        synchronized (lock) {
-
-            try {
-                logger.info("Handling START_REQUEST message: {}", message);
-
-                String[] server = getProxyServerInfo();
-
-                // Respond with server information
-                Message response = new Message(
-                        MessageType.START_RESPONSE,
-                        message.getRecipient(),
-                        message.getSender(),
-                        new String[] { server[0], server[1] });
-
-                transport.sendMessage(response);
-                logger.info("Sent proxy server info to client");
-
-            } catch (Exception e) {
-                logger.error("Error handling START_REQUEST", e);
-            }
-        }
+        logger.info("Received START_REQUEST from {}", message.getSender());
+        redirectToProxyServer(message.getSender());
     }
 
-    private String[] getProxyServerInfo() {
-        synchronized (lock) {
+    /**
+     * Handle reconnection request - refresh proxy servers and try again
+     */
+    private void handleReconnectRequest(Message message) {
+        logger.info("Received RECONNECT request from {}", message.getSender());
 
-            String[] server = new String[2];
-            String serverEntry = LocalizationServer.getServerAddresses().get("ApplicationProxy");
+        // Force a refresh of proxy servers
+        server.refreshProxyServers();
 
-            if (serverEntry != null) {
-                String[] parts = serverEntry.split(":");
-                if (parts.length >= 3) {
-                    server[0] = parts[1]; // host
-                    server[1] = parts[2]; // port
+        // Now try to redirect again
+        redirectToProxyServer(message.getSender());
+    }
+
+    /**
+     * Handle proxy server registration requests
+     */
+    private void handleProxyRegistration(Message message) {
+        logger.info("Received PROXY_REGISTRATION_REQUEST from {}", message.getSender());
+
+        if (message.getPayload() instanceof String[]) {
+            String[] registrationInfo = (String[]) message.getPayload();
+            if (registrationInfo.length >= 3) {
+                String serverId = registrationInfo[0];
+                String host = registrationInfo[1];
+                String port = registrationInfo[2];
+
+                logger.info("Processing registration request from proxy: {} on port {}", serverId, port);
+
+                // Check if this server ID is already registered
+                if (LocalizationServer.isProxyRegistered(serverId)) {
+                    // Send "already taken" response
+                    logger.warning("Proxy ID {} is already registered", serverId);
+                    sendRegistrationResponse(message.getSender(), "ALREADY_TAKEN");
                 } else {
-                    // Default fallback
-                    logger.error("Invalid server entry: {}", serverEntry);
+                    // Register the new proxy server
+                    LocalizationServer.registerProxyServer(serverId, host, port, logger);
+
+                    // Send success response
+                    sendRegistrationResponse(message.getSender(), "SUCCESS");
+
+                    // Remove this line as updateProxyHeartbeat no longer exists
+                    // LocalizationServer.updateProxyHeartbeat(serverId);
                 }
             } else {
-                // Default fallback
-                logger.error("No server entry found for 'ApplicationServer'");
+                logger.warning("Invalid registration info from {}, insufficient data", message.getSender());
+                sendRegistrationResponse(message.getSender(), "INVALID_REQUEST");
             }
-
-            return server;
         }
     }
 
-    private void cleanup() {
+    /**
+     * Send registration response back to proxy server
+     */
+    private void sendRegistrationResponse(String recipient, String status) {
         try {
-            // First unsubscribe to prevent more callbacks
-            messageBus.unsubscribe(MessageType.START_REQUEST, this::handleStartRequest);
+            Message response = new Message(
+                    MessageType.PROXY_REGISTRATION_RESPONSE,
+                    "LocalizationServer",
+                    recipient,
+                    status);
 
-            // Close transport
-            if (transport != null) {
-                transport.close();
-            }
-
-            // No need to close socket directly as transport will do it
-
-            logger.info("Handler cleanup completed for client {}", clientId);
+            transport.sendMessage(response);
+            logger.debug("Sent registration response '{}' to {}", status, recipient);
         } catch (Exception e) {
-            logger.error("Error during handler cleanup", e);
+            logger.error("Error sending registration response to {}", recipient, e);
         }
     }
 
-    public static void shutdown() {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'shutdown'");
+    /**
+     * Common method to redirect a client to an available proxy server
+     */
+    private void redirectToProxyServer(String recipient) {
+        try {
+            server.refreshProxyServers();
+
+            String[] proxyInfo = server.selectProxyServer();
+
+            if (proxyInfo != null && proxyInfo.length >= 2) { // Changed from 3 to 2
+                String host = proxyInfo[0];
+                String port = proxyInfo[1];
+
+                logger.info("Redirecting client {} to proxy server at {}:{}",
+                        recipient, host, port);
+
+                // Send redirection message
+                Message redirectMsg = new Message(
+                        MessageType.SERVER_INFO,
+                        "LocalizationServer",
+                        recipient,
+                        new String[] { host, port });
+
+                transport.sendMessage(redirectMsg);
+                messageProcessed = true;
+
+            } else {
+                logger.warning("No available proxy servers for client {}", recipient);
+                sendErrorMessage(recipient, "No proxy servers available. Try again later.");
+            }
+        } catch (Exception e) {
+            logger.error("Error redirecting client {}", recipient, e);
+            sendErrorMessage(recipient, "Internal server error. Try again later.");
+        }
+    }
+
+    /**
+     * Handle disconnect requests
+     */
+    private void handleDisconnect(Message message) {
+        logger.info("Received DISCONNECT from {}", message.getSender());
+        messageProcessed = true;
+        close();
+    }
+
+    /**
+     * Send an error message to the client
+     */
+    private void sendErrorMessage(String recipient, String errorMessage) {
+        try {
+            Message errorMsg = new Message(
+                    MessageType.ERROR,
+                    "LocalizationServer",
+                    recipient,
+                    errorMessage);
+
+            transport.sendMessage(errorMsg);
+
+        } catch (Exception e) {
+            logger.error("Error sending error message", e);
+        }
+    }
+
+    /**
+     * Close this client handler
+     */
+    public void close() {
+        if (connected) {
+            connected = false;
+            try {
+                if (transport != null) {
+                    transport.close();
+                }
+
+                if (messageBus != null) {
+                    messageBus.unsubscribeAll();
+                }
+
+                if (clientSocket != null && !clientSocket.isClosed()) {
+                    clientSocket.close();
+                }
+
+                // Remove from server's tracking
+                server.removeClient(clientId);
+
+                logger.debug("Handler for client {} closed", clientId);
+            } catch (Exception e) {
+                logger.error("Error closing client handler", e);
+            }
+        }
     }
 }

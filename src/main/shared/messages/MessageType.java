@@ -1,28 +1,39 @@
 package main.shared.messages;
 
-public final class MessageType {
-
-    private MessageType() {
-    }
-
+/**
+ * Defines all possible message types in the system.
+ * Using enum ensures type safety and prevents inconsistent usage.
+ */
+public enum MessageType {
     // Client -> Server
-    public static final String AUTH_REQUEST = "AUTH_REQUEST";
-    public static final String START_REQUEST = "START_REQUEST";
-    public static final String LOGOUT_REQUEST = "LOGOUT_REQUEST";
-    public static final String DATA_REQUEST = "DATA_REQUEST";
+    AUTH_REQUEST,
+    START_REQUEST,
+    LOGOUT_REQUEST,
+    DATA_REQUEST,
+    RECONNECT,
 
     // Server -> Client
-    public static final String START_RESPONSE = "START_RESPONSE";
-    public static final String AUTH_RESPONSE = "AUTH_RESPONSE";
-    public static final String LOGOUT_RESPONSE = "LOGOUT_RESPONSE";
-    public static final String DATA_RESPONSE = "DATA_RESPONSE";
+    START_RESPONSE,
+    AUTH_RESPONSE,
+    LOGOUT_RESPONSE,
+    DATA_RESPONSE,
 
-    public static final String SERVER_INFO = "SERVER_INFO";
-    public static final String DISCONNECT = "DISCONNECT";
-    public static final String ERROR = "ERROR";
+    // Server -> Server
+    PROXY_REGISTRATION_REQUEST,
+    PROXY_REGISTRATION_RESPONSE,
+    HEARTBEAT_REQUEST,
+    HEARTBEAT_RESPONSE,
+    PING,
 
-    public static String[] getAllTypes() {
-        return new String[] { AUTH_REQUEST, START_REQUEST, LOGOUT_REQUEST, DATA_REQUEST,
-                START_RESPONSE, AUTH_RESPONSE, LOGOUT_RESPONSE, DATA_RESPONSE };
+    // Shared
+    SERVER_INFO,
+    DISCONNECT,
+    ERROR;
+
+    /**
+     * Get all message types
+     */
+    public static MessageType[] getAllTypes() {
+        return MessageType.values();
     }
 }

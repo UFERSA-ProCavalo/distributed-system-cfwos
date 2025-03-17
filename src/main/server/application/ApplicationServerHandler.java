@@ -199,7 +199,8 @@ public class ApplicationServerHandler implements Runnable {
         String name = requestParts[2];
         String description = requestParts[3];
 
-        if (requestParts.length >= 5) {
+        if (requestParts.length == 5) {
+            // TODO fix timestamp
             String timestamp = requestParts[4];
             database.addWorkOrder(code, name, description, timestamp);
         } else {
@@ -209,6 +210,10 @@ public class ApplicationServerHandler implements Runnable {
         response.put("status", "success");
         response.put("message", "Work order added successfully");
         response.put("code", String.valueOf(code));
+        response.put("name", name);
+        response.put("description", description);
+        // need to fix this my guy
+        response.put("timestamp", database.searchWorkOrder(code).getTimestamp());
     }
 
     private void handleRemoveOperation(String[] requestParts, Map<String, String> response) {
@@ -234,9 +239,16 @@ public class ApplicationServerHandler implements Runnable {
         int code = Integer.parseInt(requestParts[1]);
         String name = requestParts[2];
         String description = requestParts[3];
+
         String timestamp = requestParts[4];
 
-        database.updateWorkOrder(code, name, description, timestamp);
+        // TODO fix timestamp
+        if (timestamp == null) {
+            database.updateWorkOrder(code, name, description, timestamp);
+        } else {
+
+            database.updateWorkOrder(code, name, description, timestamp);
+        }
 
         response.put("status", "success");
         response.put("message", "Work order updated successfully");
@@ -254,6 +266,7 @@ public class ApplicationServerHandler implements Runnable {
 
         if (workOrder != null) {
             response.put("status", "success");
+            response.put("message", "Work order found");
             response.put("code", String.valueOf(workOrder.getCode()));
             response.put("name", workOrder.getName());
             response.put("description", workOrder.getDescription());
