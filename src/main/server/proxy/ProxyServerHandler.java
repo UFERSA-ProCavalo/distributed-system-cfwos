@@ -119,7 +119,6 @@ public class ProxyServerHandler implements Runnable {
                 clientMessageBus.subscribe(MessageType.AUTH_REQUEST, this::handleAuthRequest);
                 clientMessageBus.subscribe(MessageType.DATA_REQUEST, this::handleDataRequest);
                 clientMessageBus.subscribe(MessageType.DISCONNECT, this::handleDisconnect);
-                // Add subscription for LOGOUT_REQUEST
                 clientMessageBus.subscribe(MessageType.LOGOUT_REQUEST, this::handleLogoutRequest);
 
             } catch (Exception e) {

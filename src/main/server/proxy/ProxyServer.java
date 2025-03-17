@@ -29,10 +29,14 @@ public class ProxyServer {
     private boolean running = true;
 
     // Server identity and messaging
-    private String serverId;
+    private static String serverId;
     private MessageBus messageBus;
     private SocketMessageTransport localizationTransport;
     private Thread heartbeatThread;
+
+    // Registration synchronization
+    private final Object registrationLock = new Object();
+    private volatile boolean registrationComplete = false;
 
     // Cache compartilhada entre todos os handlers
     public static final CacheFIFO<WorkOrder> cache = new CacheFIFO<WorkOrder>();
@@ -43,9 +47,9 @@ public class ProxyServer {
     private final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
     private final AtomicInteger nextClientId = new AtomicInteger(1);
 
-    public ProxyServer(int port) {
+    public ProxyServer(int port, String serverId) {
         System.out.println("\033[2J\033[1;1H"); // Clear screen
-        this.logger = Logger.getLogger();
+        this.logger = Logger.getLogger(serverId);
         this.authService = AuthService.getInstance();
         SERVER_PORT = port;
 
@@ -54,7 +58,7 @@ public class ProxyServer {
 
         // Subscribe to message types
         messageBus.subscribe(MessageType.PROXY_REGISTRATION_RESPONSE, this::handleRegistrationResponse);
-        messageBus.subscribe(MessageType.HEARTBEAT_REQUEST, this::handleHeartbeatRequest);
+        messageBus.subscribe(MessageType.PING, this::handlePing);
 
         // Inicializa o sistema de cache
         logger.info("Sistema de cache inicializado com política FIFO");
@@ -74,8 +78,11 @@ public class ProxyServer {
         // Register with localization server before starting
         sendStartSignal();
 
+        // Wait for registration to complete
+        waitForRegistration();
+
         // Monitor localization connection
-        startLocalizationConnectionMonitor();
+        // startLocalizationConnectionMonitor();
 
         this.run();
     }
@@ -112,6 +119,9 @@ public class ProxyServer {
 
     private void sendStartSignal() {
         try {
+            // Reset registration flag
+            registrationComplete = false;
+
             // Generate server ID based on port
             serverId = "Proxy-" + SERVER_PORT;
             logger.info("Registering with localization server as {} on port {}", serverId, SERVER_PORT);
@@ -135,17 +145,52 @@ public class ProxyServer {
         }
     }
 
+    private void waitForRegistration() {
+        synchronized (registrationLock) {
+            try {
+                // Wait for up to 10 seconds for registration response
+                long startTime = System.currentTimeMillis();
+                long timeout = 10000; // 10 seconds timeout
+
+                while (!registrationComplete && (System.currentTimeMillis() - startTime) < timeout) {
+                    logger.debug("Waiting for registration response...");
+                    registrationLock.wait(1000); // Wait in 1-second intervals
+                }
+
+                if (!registrationComplete) {
+                    logger.error("Registration response timeout - localization server may be down");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Registration wait interrupted", e);
+            }
+        }
+    }
+
     private void handleRegistrationResponse(Message message) {
         if (message.getType() == MessageType.PROXY_REGISTRATION_RESPONSE) {
             Object status = message.getPayload();
 
             if ("SUCCESS".equals(status)) {
                 logger.info("Successfully registered with localization server as {}", serverId);
+
+                // Mark registration as complete and notify waiting threads
+                synchronized (registrationLock) {
+                    registrationComplete = true;
+                    registrationLock.notifyAll();
+                }
+
             } else if ("ALREADY_TAKEN".equals(status)) {
                 // Try with different server ID and port
                 handleRegistrationConflict();
             } else {
                 logger.error("Unknown registration response: {}", status);
+
+                // Mark registration as failed but complete
+                synchronized (registrationLock) {
+                    registrationComplete = true;
+                    registrationLock.notifyAll();
+                }
             }
         }
     }
@@ -164,6 +209,9 @@ public class ProxyServer {
             logger.info("Registration conflict detected. Retrying with new ID {} and port {}",
                     serverId, SERVER_PORT);
 
+            // Reset registration flag
+            registrationComplete = false;
+
             // Send new registration request with consistent format
             Message registrationMsg = new Message(
                     MessageType.PROXY_REGISTRATION_REQUEST,
@@ -174,95 +222,44 @@ public class ProxyServer {
             logger.info("Sent registration request to localization server: {}", registrationMsg.getPayload());
             localizationTransport.sendMessage(registrationMsg);
 
+            // Wait again for the new registration response
+            waitForRegistration();
+
         } catch (Exception e) {
             logger.error("Error handling registration conflict", e);
+
+            // Mark registration as failed but complete to avoid deadlock
+            synchronized (registrationLock) {
+                registrationComplete = true;
+                registrationLock.notifyAll();
+            }
         }
     }
 
-    private void handleHeartbeatRequest(Message message) {
-        if (message.getType() == MessageType.HEARTBEAT_REQUEST) {
+    private void handlePing(Message message) {
+        if (message.getType() == MessageType.PING) {
             try {
-                // Respond on the SAME connection, don't create a new one
-                Message heartbeatResponse = new Message(
-                        MessageType.HEARTBEAT_RESPONSE,
+                logger.debug("Received PING from {}", message.getSender());
+                // Respond with PONG that includes connection info
+                Message pingResponse = new Message(
+                        MessageType.PONG,
                         serverId,
                         message.getSender(),
                         new String[] {
                                 serverId,
+                                SERVER_IP,
                                 String.valueOf(SERVER_PORT),
                                 String.valueOf(activeConnections)
                         });
 
                 // Use the existing localizationTransport
-                localizationTransport.sendMessage(heartbeatResponse);
-                logger.debug("Sent heartbeat response to {}", message.getSender());
+                localizationTransport.sendMessage(pingResponse);
+                logger.debug("Sent PONG to {}", message.getSender());
 
             } catch (Exception e) {
-                logger.error("Error sending heartbeat response", e);
+                logger.error("Error sending PING response", e);
             }
         }
-    }
-
-    private void startLocalizationConnectionMonitor() {
-        heartbeatThread = new Thread(() -> {
-            int reconnectAttempts = 0;
-            int maxReconnectAttempts = 5;
-
-            while (running) {
-                try {
-                    // Only check connection every 30 seconds
-                    Thread.sleep(30000);
-
-                    // Check if we really lost connection
-                    boolean connectionLost = false;
-
-                    if (localizationTransport == null) {
-                        connectionLost = true;
-                    } else {
-                        try {
-                            // Send a simple ping to test connection
-                            Message pingMsg = new Message(
-                                    MessageType.PING,
-                                    serverId,
-                                    "LocalizationServer",
-                                    System.currentTimeMillis());
-
-                            localizationTransport.sendMessage(pingMsg);
-                            // Reset reconnect attempts if successful
-                            reconnectAttempts = 0;
-                        } catch (Exception e) {
-                            // Failed to send message, connection probably lost
-                            connectionLost = true;
-                            logger.warning("Connection check failed: {}", e.getMessage());
-                        }
-                    }
-
-                    if (connectionLost) {
-                        reconnectAttempts++;
-
-                        if (reconnectAttempts <= maxReconnectAttempts) {
-                            logger.info("Lost connection to localization server (attempt {}/{}), reconnecting...",
-                                    reconnectAttempts, maxReconnectAttempts);
-                            sendStartSignal();
-                        } else {
-                            logger.error("Failed to reconnect after {} attempts", maxReconnectAttempts);
-                            // Either quit or wait longer between reconnect attempts
-                            Thread.sleep(30000); // Wait 30 seconds before trying again
-                            reconnectAttempts = 0; // Reset counter for a fresh attempt cycle
-                        }
-                    }
-
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    logger.error("Error in localization connection monitor", e);
-                }
-            }
-        }, "localization-connection-monitor");
-
-        heartbeatThread.setDaemon(true);
-        heartbeatThread.start();
     }
 
     private void shutdown() {
@@ -295,7 +292,8 @@ public class ProxyServer {
 
     public static void main(String[] args) {
         SERVER_PORT = 22220;
-        new ProxyServer(SERVER_PORT);
+        serverId = "Proxy-3";
+        new ProxyServer(SERVER_PORT, serverId);
     }
 
     // Method to handle client disconnection, update active connections
