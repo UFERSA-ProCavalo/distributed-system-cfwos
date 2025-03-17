@@ -4,6 +4,8 @@ import main.shared.models.WorkOrder;
 import main.shared.utils.tree.ItemFormatter;
 import main.shared.utils.tree.TreeAVL;
 
+import java.util.Map;
+
 public class Database {
     private static final Object lock = new Object();
     private TreeAVL<Integer, WorkOrder> database;
@@ -87,10 +89,42 @@ public class Database {
     }
 
     /**
-     * Formata uma ordem de trabalho individual
+     * Formata uma ordem de serviço individual
      */
     private String formatWorkOrder(WorkOrder wo) {
         return String.format("Code: %d | Name: %s | Description: %s | Timestamp: %s",
                 wo.getCode(), wo.getName(), wo.getDescription(), wo.getTimestamp());
+    }
+
+    /**
+     * Clear the database
+     */
+    public void clearDatabase() {
+        synchronized (lock) {
+            database = new TreeAVL<>();
+        }
+    }
+
+    /**
+     * Copy database contents to a map (for replication)
+     */
+    public void copyToMap(Map<Integer, WorkOrder> targetMap) {
+        synchronized (lock) {
+            database.populateMap(targetMap);
+        }
+    }
+
+    /**
+     * Sync database from a map (for replication)
+     */
+    public void syncFromMap(Map<Integer, WorkOrder> sourceMap) {
+        // Clear existing database
+        clearDatabase();
+        // Synchronize the database with the provided map
+
+        // Add all work orders from the map
+        for (WorkOrder order : sourceMap.values()) {
+            addWorkOrder(order.getCode(), order.getName(), order.getDescription(), order.getTimestamp());
+        }
     }
 }

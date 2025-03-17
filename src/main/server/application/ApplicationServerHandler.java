@@ -1,7 +1,9 @@
 package main.server.application;
 
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import main.server.application.database.Database;
@@ -190,17 +192,55 @@ public class ApplicationServerHandler implements Runnable {
     }
 
     private void handleAddOperation(String[] requestParts, Map<String, String> response) {
+        int errorCount = 0;
+        List<String> errorMessages = new ArrayList<>(); // Store errors dynamically
+
         // Format: ADD|code|name|description|timestamp
         if (requestParts.length < 4) {
-            throw new IllegalArgumentException("ADD operation requires at least code, name, and description");
+            errorMessages.add("ADD operation requires at least code, name, and description");
+            errorCount++;
         }
 
+        if (requestParts.length >= 4) { // Only check these if length is valid
+            if (requestParts[1].isEmpty() || requestParts[2].isEmpty() || requestParts[3].isEmpty()) {
+                errorMessages.add("Code, name, and description cannot be empty");
+                errorCount++;
+            }
+
+            // Check if code is a positive integer
+            if (!requestParts[1].matches("\\d+")) {
+                errorMessages.add("Code must be a positive integer");
+                errorCount++;
+            } else {
+                int code = Integer.parseInt(requestParts[1]);
+
+                // Check if work order with the same code already exists
+                if (database.searchWorkOrder(code) != null) {
+                    errorMessages.add("Work order with code " + code + " already exists");
+                    errorCount++;
+                }
+
+                if (code < 0) {
+                    errorMessages.add("Code must be a positive integer");
+                    errorCount++;
+                }
+            }
+        }
+
+        // If there are errors, stop processing and return errors
+        if (errorCount > 0) {
+            response.put("status", "error");
+            response.put("message", String.valueOf(errorCount) + " errors found\n" +
+                    String.join("; ", errorMessages));
+            return;
+        }
+
+        // No errors, process the work order
         int code = Integer.parseInt(requestParts[1]);
         String name = requestParts[2];
         String description = requestParts[3];
 
         if (requestParts.length == 5) {
-            // TODO fix timestamp
             String timestamp = requestParts[4];
             database.addWorkOrder(code, name, description, timestamp);
         } else {
@@ -212,7 +252,6 @@ public class ApplicationServerHandler implements Runnable {
         response.put("code", String.valueOf(code));
         response.put("name", name);
         response.put("description", description);
-        // need to fix this my guy
         response.put("timestamp", database.searchWorkOrder(code).getTimestamp());
     }
 
