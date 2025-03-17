@@ -42,6 +42,7 @@ public class ImplClient implements Runnable {
 
         // Initialize services
         this.networkManager = new ServiceNetwork(initialSocket, logger, clientId);
+        this.networkManager.setClient(this); // Set the client reference
         this.messageDispatcher = new MessageDispatcher(this, logger);
 
         // Register message bus subscriptions
@@ -215,6 +216,22 @@ public class ImplClient implements Runnable {
     }
 
     /**
+     * Handle connection error or loss
+     * Called when a connection error is detected
+     */
+    public void handleConnectionLost() {
+        logger.error("Connection to server lost");
+
+        // If we have a UI, show reconnection dialog
+        if (lanternaUI != null) {
+            lanternaUI.showConnectionLostDialog(this);
+        } else {
+            // For non-UI mode, try to reconnect automatically
+            requestReconnect();
+        }
+    }
+
+    /**
      * Attempt to reconnect to the localization server after a failed redirect
      */
     public void requestReconnect() {
@@ -225,6 +242,7 @@ public class ImplClient implements Runnable {
                 lanternaUI.showError("Shutting down client...");
             }
             shutdown();
+            return;
         }
 
         reconnectAttempts++;
@@ -245,6 +263,12 @@ public class ImplClient implements Runnable {
             logger.error("Failed to connect to localization server for reconnection");
             if (lanternaUI != null) {
                 lanternaUI.showError("Failed to connect to localization server for reconnection");
+
+                // Ask user if they want to try again
+                lanternaUI.showConnectionLostDialog(this);
+            } else {
+                // In console mode, shutdown
+                shutdown();
             }
         }
     }

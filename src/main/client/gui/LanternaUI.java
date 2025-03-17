@@ -1110,4 +1110,54 @@ public class LanternaUI implements Runnable {
         queueUIUpdate(UIUpdate.createStatus(message));
         logger.debug("Added log message: {}", message);
     }
+
+    /**
+     * Show connection lost dialog and ask if user wants to reconnect
+     */
+    public void showConnectionLostDialog(ImplClient client) {
+        invokeLater(() -> {
+            try {
+                // Update UI to show disconnected status
+                updateConnectionStatus("Disconnected", false);
+                updateStatus("Connection lost");
+
+                // Show dialog asking if user wants to reconnect
+                MessageDialogButton result = MessageDialog.showMessageDialog(
+                        gui,
+                        "Connection Lost",
+                        "Connection to server was lost. Do you want to reconnect?",
+                        MessageDialogButton.Yes,
+                        MessageDialogButton.No);
+
+                if (result == MessageDialogButton.Yes) {
+                    logger.info("User chose to reconnect");
+                    updateStatus("Attempting to reconnect...");
+
+                    // Use existing reconnect method
+                    client.requestReconnect();
+                } else {
+                    logger.info("User chose not to reconnect");
+
+                    // Show goodbye message and exit
+                    MessageDialog.showMessageDialog(
+                            gui,
+                            "Goodbye",
+                            "The application will now close.",
+                            MessageDialogButton.OK);
+
+                    // Shutdown after a short delay
+                    new Thread(() -> {
+                        try {
+                            Thread.sleep(500);
+                            shutdown();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }, "shutdown-delay").start();
+                }
+            } catch (Exception e) {
+                logger.error("Error showing connection lost dialog", e);
+            }
+        });
+    }
 }

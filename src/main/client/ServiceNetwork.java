@@ -21,6 +21,7 @@ public class ServiceNetwork {
     private final Logger logger;
     private final String componentName;
     private boolean connected = false;
+    private ImplClient client;
 
     /**
      * Creates a NetworkManager with an existing socket
@@ -82,18 +83,25 @@ public class ServiceNetwork {
     /**
      * Sends a message through the transport layer
      */
-    public boolean sendMessage(Message message) {
-        if (transport != null && socket != null && !socket.isClosed()) {
-            try {
+    public void sendMessage(Message message) {
+        try {
+            if (transport != null && transport.isRunning()) {
                 transport.sendMessage(message);
-                return true;
-            } catch (Exception e) {
-                logger.error("Failed to send message", e);
-                return false;
+            } else {
+                logger.error("Cannot send message - transport is null or disconnected");
+
+                // Notify about connection loss
+                if (client != null) {
+                    client.handleConnectionLost();
+                }
             }
-        } else {
-            logger.error("Cannot send message - connection is closed");
-            return false;
+        } catch (Exception e) {
+            logger.error("Error sending message", e);
+
+            // Notify about connection error
+            if (client != null) {
+                client.handleConnectionLost();
+            }
         }
     }
 
@@ -174,5 +182,12 @@ public class ServiceNetwork {
      */
     public SocketMessageTransport getTransport() {
         return transport;
+    }
+
+    /**
+     * Sets the client for callbacks
+     */
+    public void setClient(ImplClient client) {
+        this.client = client;
     }
 }
