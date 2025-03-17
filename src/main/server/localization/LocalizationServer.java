@@ -1,27 +1,24 @@
 package main.server.localization;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
 import java.util.Random;
-import java.util.Set;
-import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
 
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
 import main.shared.messages.MessageType;
-import main.shared.messages.SocketMessageTransport;
 
 /**
  * Localization Server
@@ -38,7 +35,6 @@ public class LocalizationServer implements Runnable {
     // Thread pools
     private final ExecutorService connectionAcceptorPool;
     private final ExecutorService clientHandlerPool;
-    private final ScheduledExecutorService heartbeatScheduler;
 
     // Client tracking
     private final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
@@ -46,16 +42,19 @@ public class LocalizationServer implements Runnable {
 
     // Proxy server registry - maps server ID to connection info (host:port)
     private static final Map<String, ProxyInfo> activeProxies = new ConcurrentHashMap<>();
-    private static final long PROXY_TIMEOUT_MS = 15000; // 15 seconds timeout for proxy servers
-    private static final long HEARTBEAT_INTERVAL_MS = 60000; // 60 seconds between heartbeats
     private final Random random = new Random();
     private final MessageBus messageBus;
+
+    // Add these fields
+    private final Set<String> respondedProxies = ConcurrentHashMap.newKeySet();
+    private final Object pongLock = new Object();
+    private static final long PING_TIMEOUT_MS = 10000; // 10 seconds timeout
 
     // Simple value class - no complex logic
     private static class ProxyInfo {
         final String id;
-        final String host;
-        final String port;
+        String host;
+        String port;
         volatile int activeConnections;
 
         public ProxyInfo(String id, String host, String port) {
@@ -97,17 +96,7 @@ public class LocalizationServer implements Runnable {
                     return t;
                 });
 
-        // Heartbeat scheduler for proxy server health checks
-        this.heartbeatScheduler = Executors.newScheduledThreadPool(1, r -> {
-            Thread t = new Thread(r, "heartbeat-scheduler");
-            t.setDaemon(true);
-            return t;
-        });
-
-        // Register for message handlers - only keep heartbeat response handling
-        // in the main server class
-        messageBus.subscribe(MessageType.HEARTBEAT_RESPONSE, this::handleHeartbeatResponse);
-        // Proxy registration is now handled by the LocalizationServerHandler
+        // Register for message handlers
     }
 
     /**
@@ -126,6 +115,25 @@ public class LocalizationServer implements Runnable {
         return activeProxies.containsKey(serverId);
     }
 
+    // make a method to update the proxyList, based on the PONG received from the
+    // proxy server
+
+    public static synchronized void updateProxyServer(String serverId, Object payload) {
+        ProxyInfo proxy = activeProxies.get(serverId);
+        if (proxy != null) {
+            // Update the proxy info based on the payload
+            // Assuming payload contains new connection info
+            if (payload instanceof String[]) {
+                String[] newInfo = (String[]) payload;
+                proxy.host = newInfo[1];
+                proxy.port = newInfo[2];
+                proxy.activeConnections = Integer.parseInt(newInfo[3]);
+            }
+        } else {
+
+        }
+    }
+
     /**
      * Unregister a proxy server
      */
@@ -136,7 +144,7 @@ public class LocalizationServer implements Runnable {
     }
 
     /**
-     * Select a proxy server for redirection
+     * Select a proxy server for redirection based on load balancing
      */
     public String[] selectProxyServer() {
         if (activeProxies.isEmpty()) {
@@ -166,83 +174,116 @@ public class LocalizationServer implements Runnable {
     }
 
     /**
-     * Send heartbeats to all active proxies
+     * Process PONG from a proxy server
      */
-    private void sendHeartbeats() {
-        logger.debug("Sending heartbeats to {} proxy servers", activeProxies.size());
+    public synchronized void handleProxyPong(String proxyId, Object payload) {
+        logger.info("Processing PONG from proxy: {}", proxyId);
 
-        // Loop through active handlers and send heartbeats
-        for (LocalizationServerHandler handler : connectedClients.values()) {
-            String clientId = handler.getClientId();
+        // Mark as responsive
+        respondedProxies.add(proxyId);
 
-            // Skip non-proxy clients
-            if (!clientId.startsWith("Proxy-")) {
-                continue;
-            }
+        // Update the proxy info if payload contains connection data
+        updateProxyServer(proxyId, payload);
 
-            // Check if this proxy is in our active list
-            if (activeProxies.containsKey(clientId) && handler.isConnected()) {
+        // Notify any waiting threads
+        synchronized (pongLock) {
+            pongLock.notifyAll();
+        }
+    }
+
+    /**
+     * Send PING to all proxies
+     */
+    public void sendPingToAllProxies(String requestingClientId) {
+        logger.info("Sending PINGs to all proxies for {}", requestingClientId);
+
+        for (String proxyId : new ArrayList<>(activeProxies.keySet())) {
+            LocalizationServerHandler handler = connectedClients.get(proxyId);
+            if (handler != null && handler.isConnected()) {
                 try {
-                    // Send heartbeat through existing connection
-                    Message heartbeatMsg = new Message(
-                            MessageType.HEARTBEAT_REQUEST,
+                    Message pingMsg = new Message(
+                            MessageType.PING,
                             "LocalizationServer",
-                            clientId,
+                            proxyId,
                             System.currentTimeMillis());
 
-                    handler.sendMessage(heartbeatMsg);
-                    logger.debug("Sent heartbeat to proxy: {}", clientId);
+                    handler.sendMessage(pingMsg);
+                    logger.debug("Sent PING to proxy: {}", proxyId);
                 } catch (Exception e) {
-                    logger.warning("Failed to send heartbeat to {}, removing from active list", clientId);
-                    // If we can't even send a heartbeat, remove it immediately
-                    activeProxies.remove(clientId);
+                    logger.warning("Failed to send PING to {}", proxyId);
                 }
-            } else if (!handler.isConnected()) {
-                // Handler connection is dead, remove proxy
-                logger.info("Proxy {} disconnected, removing from active list", clientId);
-                activeProxies.remove(clientId);
             }
         }
     }
 
     /**
-     * Handle heartbeat responses from proxy servers
-     */
-    private void handleHeartbeatResponse(Message message) {
-        if (message.getType() == MessageType.HEARTBEAT_RESPONSE) {
-            String senderId = message.getSender();
-            ProxyInfo proxy = activeProxies.get(senderId);
-
-            if (proxy != null) {
-                // Update connection count if provided
-                if (message.getPayload() instanceof String[] && ((String[]) message.getPayload()).length >= 3) {
-                    try {
-                        int connections = Integer.parseInt(((String[]) message.getPayload())[2]);
-                        proxy.activeConnections = connections;
-                        logger.debug("Updated active connections for {}: {}", senderId, connections);
-                    } catch (NumberFormatException e) {
-                        logger.error("Invalid active connections value from {}", senderId);
-                    }
-                }
-
-                logger.debug("Received heartbeat response from {}", senderId);
-            }
-        }
-    }
-
-    /**
-     * Force a refresh of the proxy server list
-     * Used when a client requests RECONNECT
+     * Send PING to all proxy servers and remove unresponsive ones
      */
     public void refreshProxyServers() {
-        sendHeartbeats();
-
-        // Wait a bit for responses to come in
-        try {
-            Thread.sleep(3000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (activeProxies.isEmpty()) {
+            logger.info("No proxy servers to refresh");
+            return;
         }
+
+        logger.info("Refreshing proxy server list with {} servers", activeProxies.size());
+
+        // Clear the responded proxies set
+        respondedProxies.clear();
+
+        // Send PINGs to all proxies
+        List<String> proxyIds = new ArrayList<>(activeProxies.keySet());
+        int totalProxies = proxyIds.size();
+
+        for (String proxyId : proxyIds) {
+            LocalizationServerHandler handler = connectedClients.get(proxyId);
+            if (handler != null && handler.isConnected()) {
+                try {
+                    // Send PING through existing connection
+                    Message pingMsg = new Message(
+                            MessageType.PING,
+                            "LocalizationServer",
+                            proxyId,
+                            System.currentTimeMillis());
+
+                    handler.sendMessage(pingMsg);
+                    logger.debug("Sent PING to proxy: {}", proxyId);
+                } catch (Exception e) {
+                    logger.warning("Failed to send PING to {}, will be removed", proxyId);
+                }
+            } else {
+                logger.warning("No handler or connection dead for proxy {}, will be removed", proxyId);
+            }
+        }
+
+        // Wait for responses (all proxies or timeout)
+        long startTime = System.currentTimeMillis();
+
+        synchronized (pongLock) {
+            while (respondedProxies.size() < totalProxies &&
+                    (System.currentTimeMillis() - startTime) < PING_TIMEOUT_MS) {
+                try {
+                    // Wait with timeout
+                    pongLock.wait(1000); // Wake up every second to check
+                    logger.debug("Waiting for PONGs... received {}/{}",
+                            respondedProxies.size(), totalProxies);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
+        // Remove unresponsive proxies
+        for (String proxyId : proxyIds) {
+            if (!respondedProxies.contains(proxyId)) {
+                logger.warning("Removing unresponsive proxy: {}", proxyId);
+                activeProxies.remove(proxyId);
+            } else {
+                logger.info("Proxy {} is responsive", proxyId);
+            }
+        }
+
+        logger.info("Proxy server refresh complete, {} active proxies remain", activeProxies.size());
     }
 
     @Override
@@ -255,13 +296,6 @@ public class LocalizationServer implements Runnable {
             // Accept connections in a separate thread
             connectionAcceptorPool.submit(this::acceptConnections);
 
-            // Schedule regular heartbeats
-            heartbeatScheduler.scheduleAtFixedRate(
-                    this::sendHeartbeats,
-                    0, // start immediately
-                    HEARTBEAT_INTERVAL_MS,
-                    TimeUnit.MILLISECONDS);
-
             // Keep the main thread alive until shutdown
             while (running) {
                 try {
@@ -271,8 +305,7 @@ public class LocalizationServer implements Runnable {
 
                     // Log active connections per proxy
                     for (ProxyInfo proxy : activeProxies.values()) {
-                        logger.debug("Server {} active connections: {}",
-                                proxy.id, proxy.activeConnections);
+                        logger.debug("Server {} active connections: {}", proxy.id, proxy.activeConnections);
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -320,6 +353,17 @@ public class LocalizationServer implements Runnable {
     }
 
     /**
+     * Update a client ID to a new ID (used for proxy registration)
+     */
+    public void updateClientId(String oldId, String newId) {
+        LocalizationServerHandler handler = connectedClients.remove(oldId);
+        if (handler != null) {
+            connectedClients.put(newId, handler);
+            logger.info("Updated client ID from {} to {}", oldId, newId);
+        }
+    }
+
+    /**
      * Shutdown the server and all resources
      */
     public void shutdown() {
@@ -347,7 +391,6 @@ public class LocalizationServer implements Runnable {
         // Shutdown thread pools
         shutdownThreadPool(connectionAcceptorPool, "Connection Acceptor");
         shutdownThreadPool(clientHandlerPool, "Client Handler");
-        shutdownThreadPool(heartbeatScheduler, "Heartbeat Scheduler");
 
         // Clean up message bus
         if (messageBus != null) {

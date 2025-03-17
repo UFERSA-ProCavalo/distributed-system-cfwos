@@ -14,7 +14,7 @@ import main.shared.messages.SocketMessageTransport;
  */
 public class LocalizationServerHandler implements Runnable {
     private final Socket clientSocket;
-    private final String clientId;
+    private String clientId;
     private final LocalizationServer server;
     private final Logger logger;
 
@@ -107,6 +107,7 @@ public class LocalizationServerHandler implements Runnable {
 
             // Add handler for proxy registration requests
             messageBus.subscribe(MessageType.PROXY_REGISTRATION_REQUEST, this::handleProxyRegistration);
+            messageBus.subscribe(MessageType.PONG, this::handlePong);
 
             logger.debug("Communication setup complete for client {}", clientId);
         } catch (Exception e) {
@@ -120,20 +121,41 @@ public class LocalizationServerHandler implements Runnable {
      */
     private void handleStartRequest(Message message) {
         logger.info("Received START_REQUEST from {}", message.getSender());
-        redirectToProxyServer(message.getSender());
+
+        // Use a separate thread for refresh to avoid blocking the message handler
+        new Thread(() -> {
+            try {
+                // Refresh proxy list
+                server.refreshProxyServers();
+
+                // Now redirect
+                redirectToProxyServer(message.getSender());
+            } catch (Exception e) {
+                logger.error("Error processing START_REQUEST", e);
+                sendErrorMessage(message.getSender(), "Error processing request: " + e.getMessage());
+            }
+        }, "refresh-proxies-thread").start();
     }
 
     /**
-     * Handle reconnection request - refresh proxy servers and try again
+     * Handle reconnection request
      */
     private void handleReconnectRequest(Message message) {
         logger.info("Received RECONNECT request from {}", message.getSender());
 
-        // Force a refresh of proxy servers
-        server.refreshProxyServers();
+        // Use a separate thread for refresh to avoid blocking the message handler
+        new Thread(() -> {
+            try {
+                // Refresh proxy list
+                server.refreshProxyServers();
 
-        // Now try to redirect again
-        redirectToProxyServer(message.getSender());
+                // Redirect to available proxy
+                redirectToProxyServer(message.getSender());
+            } catch (Exception e) {
+                logger.error("Error processing RECONNECT", e);
+                sendErrorMessage(message.getSender(), "Error processing reconnect: " + e.getMessage());
+            }
+        }, "reconnect-proxies-thread").start();
     }
 
     /**
@@ -160,6 +182,12 @@ public class LocalizationServerHandler implements Runnable {
                     // Register the new proxy server
                     LocalizationServer.registerProxyServer(serverId, host, port, logger);
 
+                    // Update the client ID in the server's map to match the proxy ID
+                    server.updateClientId(clientId, serverId);
+
+                    // Update this handler's client ID
+                    this.clientId = serverId;
+
                     // Send success response
                     sendRegistrationResponse(message.getSender(), "SUCCESS");
 
@@ -170,6 +198,16 @@ public class LocalizationServerHandler implements Runnable {
                 logger.warning("Invalid registration info from {}, insufficient data", message.getSender());
                 sendRegistrationResponse(message.getSender(), "INVALID_REQUEST");
             }
+        }
+    }
+
+    private void handlePong(Message message) {
+        if (message.getType() == MessageType.PONG) {
+            String senderId = message.getSender();
+            logger.info("Received PONG from proxy: {}", senderId);
+
+            // Forward to main server to process this PONG
+            server.handleProxyPong(senderId, message.getPayload());
         }
     }
 
@@ -196,34 +234,26 @@ public class LocalizationServerHandler implements Runnable {
      */
     private void redirectToProxyServer(String recipient) {
         try {
-            server.refreshProxyServers();
+            String[] serverInfo = server.selectProxyServer();
 
-            String[] proxyInfo = server.selectProxyServer();
-
-            if (proxyInfo != null && proxyInfo.length >= 2) { // Changed from 3 to 2
-                String host = proxyInfo[0];
-                String port = proxyInfo[1];
-
-                logger.info("Redirecting client {} to proxy server at {}:{}",
-                        recipient, host, port);
-
-                // Send redirection message
-                Message redirectMsg = new Message(
+            if (serverInfo != null) {
+                // Create a response with the proxy server info
+                Message response = new Message(
                         MessageType.SERVER_INFO,
                         "LocalizationServer",
                         recipient,
-                        new String[] { host, port });
+                        serverInfo);
 
-                transport.sendMessage(redirectMsg);
-                messageProcessed = true;
-
+                transport.sendMessage(response);
+                logger.info("Redirected {} to proxy server at {}:{}",
+                        recipient, serverInfo[0], serverInfo[1]);
             } else {
-                logger.warning("No available proxy servers for client {}", recipient);
-                sendErrorMessage(recipient, "No proxy servers available. Try again later.");
+                // No servers available
+                sendErrorMessage(recipient, "No proxy servers available");
             }
         } catch (Exception e) {
-            logger.error("Error redirecting client {}", recipient, e);
-            sendErrorMessage(recipient, "Internal server error. Try again later.");
+            logger.error("Error redirecting client to proxy server", e);
+            sendErrorMessage(recipient, "Internal error: " + e.getMessage());
         }
     }
 
