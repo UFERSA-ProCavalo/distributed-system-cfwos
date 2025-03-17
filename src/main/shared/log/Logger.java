@@ -55,10 +55,11 @@ public class Logger {
      * Construtor privado para implementação do padrão singleton.
      * Inicializa o logger com um nome de componente e diretório específicos.
      *
-     * @param componentName Nome do componente que está utilizando o logger
-     * @param logDir        Diretório base onde os logs serão armazenados
+     * @param componentName  Nome do componente que está utilizando o logger
+     * @param logDir         Diretório base onde os logs serão armazenados
+     * @param customFileName Nome de arquivo personalizado (opcional, pode ser null)
      */
-    private Logger(String componentName, Path logDir) {
+    private Logger(String componentName, Path logDir, String customFileName) {
         this.componentName = componentName;
 
         // Cria estrutura de diretório diário
@@ -71,8 +72,13 @@ public class Logger {
         Path debugDir = logsDir.resolve("_debug.log");
         dailyDir.toFile().mkdirs();
 
-        // Define o caminho do arquivo de log
-        this.logFilePath = dailyDir.resolve(componentName + "_" + timeStamp + ".log");
+        // Define o caminho do arquivo de log - usa nome personalizado se fornecido
+        if (customFileName != null && !customFileName.isEmpty()) {
+            this.logFilePath = dailyDir.resolve(customFileName + ".log");
+        } else {
+            this.logFilePath = dailyDir.resolve(componentName + "_" + timeStamp + ".log");
+        }
+
         try {
             debugDir.toFile().createNewFile();
         } catch (Exception e) {
@@ -81,6 +87,13 @@ public class Logger {
 
         // Inicializa o arquivo de log
         initializeLogFile();
+    }
+
+    /**
+     * Construtor privado original para compatibilidade com código existente
+     */
+    private Logger(String componentName, Path logDir) {
+        this(componentName, logDir, null);
     }
 
     /**
@@ -124,6 +137,33 @@ public class Logger {
         } catch (ClassNotFoundException e) {
             // Fallback para o diretório atual
             return getLogger("Unknown", Paths.get(""));
+        }
+    }
+
+    /**
+     * Obtém um logger com nome de arquivo personalizado baseado na classe
+     * chamadora.
+     *
+     * @param customFileName Nome de arquivo personalizado para o log (sem extensão)
+     * @return Uma instância de Logger configurada para a classe chamadora
+     */
+    public static Logger getLogger(String customFileName) {
+        // Encontra a classe chamadora
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        String callerClassName = stack[2].getClassName();
+
+        try {
+            // Obtém a classe
+            Class<?> callerClass = Class.forName(callerClassName);
+            String componentName = callerClass.getSimpleName();
+
+            // Obtém o caminho do diretório do pacote
+            Path packagePath = getPackagePath(callerClass);
+
+            return getLogger(componentName, packagePath, customFileName);
+        } catch (ClassNotFoundException e) {
+            // Fallback para o diretório atual
+            return getLogger("Unknown", Paths.get(""), customFileName);
         }
     }
 
@@ -176,10 +216,23 @@ public class Logger {
      * @return Uma instância de Logger configurada com os parâmetros fornecidos
      */
     public static Logger getLogger(String componentName, Path logDir) {
-        String key = componentName + "@" + logDir;
+        return getLogger(componentName, logDir, null);
+    }
+
+    /**
+     * Obtém um logger com nome de componente, diretório e nome de arquivo
+     * personalizados.
+     *
+     * @param componentName  Nome do componente que está usando o logger
+     * @param logDir         Diretório onde os logs serão armazenados
+     * @param customFileName Nome de arquivo personalizado para o log (sem extensão)
+     * @return Uma instância de Logger configurada com os parâmetros fornecidos
+     */
+    public static Logger getLogger(String componentName, Path logDir, String customFileName) {
+        String key = componentName + "@" + logDir + (customFileName != null ? "#" + customFileName : "");
         synchronized (loggerInstances) {
             if (!loggerInstances.containsKey(key)) {
-                loggerInstances.put(key, new Logger(componentName, logDir));
+                loggerInstances.put(key, new Logger(componentName, logDir, customFileName));
             }
             return loggerInstances.get(key);
         }

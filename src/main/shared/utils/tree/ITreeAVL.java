@@ -13,4 +13,5 @@ public interface ITreeAVL<K, V> {
 
     int getSize();
 
+    Object getRoot();
 }

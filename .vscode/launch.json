@@ -1,0 +1,21 @@
+{
+  "version": "0.0.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Primary Server",
+      "request": "launch",
+      "mainClass": "main.server.application.ApplicationServer",
+      "args": ["primary"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "java",
+      "name": "Backup Server",
+      "request": "launch",
+      "mainClass": "main.server.application.ApplicationServer",
+      "args": ["backup", "localhost", "33331"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

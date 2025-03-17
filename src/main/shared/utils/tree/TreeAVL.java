@@ -1,12 +1,16 @@
 package main.shared.utils.tree;
 
+import java.util.Map;
+
 public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
 
     private Node root;
     private int balanceCounter;
-    // private int size;
 
-    class Node {
+    // private int size;
+    // not a good approach to have inner class being public
+    // think of something later. Still, it is what it is
+    public class Node {
         K key;
         V val;
         int heightNode;
@@ -364,7 +368,8 @@ public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
         return node.heightNode;
     }
 
-    Node getRoot() {
+    @Override
+    public Node getRoot() {
         return root;
     }
 
@@ -435,6 +440,21 @@ public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
             appendReverseOrder(node.r, builder, formatter);
             builder.append(formatter.format(node.val)).append("\n");
             appendReverseOrder(node.l, builder, formatter);
+        }
+    }
+
+    /**
+     * Populate a map with all entries in the tree
+     */
+    public void populateMap(Map<K, V> map) {
+        populateMapHelper(root, map);
+    }
+
+    private void populateMapHelper(Node node, Map<K, V> map) {
+        if (node != null) {
+            populateMapHelper(node.l, map);
+            map.put(node.key, node.val);
+            populateMapHelper(node.r, map);
         }
     }
 

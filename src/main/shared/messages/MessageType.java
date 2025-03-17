@@ -21,9 +21,10 @@ public enum MessageType {
     // Server -> Server
     PROXY_REGISTRATION_REQUEST,
     PROXY_REGISTRATION_RESPONSE,
-    HEARTBEAT_REQUEST,
-    HEARTBEAT_RESPONSE,
+    //HEARTBEAT_REQUEST,
+    //HEARTBEAT_RESPONSE,
     PING,
+    PONG,
 
     // Shared
     SERVER_INFO,
