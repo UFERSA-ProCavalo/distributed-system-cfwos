@@ -3,6 +3,8 @@ package main.server.proxy;
 // Keep existing imports
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -13,6 +15,7 @@ import main.server.localization.LocalizationServerHandler;
 import main.server.proxy.auth.AuthService;
 import main.server.proxy.cache.CacheFIFO;
 import main.server.proxy.replication.ProxyPeerManager;
+import main.server.proxy.replication.ProxyRMI;
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
@@ -98,6 +101,9 @@ public class ProxyServer {
         // Wait for registration to complete
         waitForRegistration();
 
+        // Test RMI connection
+        testRmiConnection();
+
         this.run();
     }
 
@@ -112,17 +118,20 @@ public class ProxyServer {
                 if (peerInfo.length >= 3) {
                     String peerId = peerInfo[0];
                     String host = peerInfo[1];
-                    int rmiPort = Integer.parseInt(peerInfo[2]);
+                    int peerRmiPort = Integer.parseInt(peerInfo[2]);
 
-                    // Don't register ourselves
-                    if (peerId.equals(serverId)) {
-                        logger.debug("Ignoring own proxy peer info");
+                    // Don't register ourselves - compare without the "Proxy-" prefix if present
+                    String strippedPeerId = peerId.startsWith("Proxy-") ? peerId.substring(6) : peerId;
+                    String strippedServerId = serverId.startsWith("Proxy-") ? serverId.substring(6) : serverId;
+
+                    if (strippedPeerId.equals(strippedServerId)) {
+                        logger.debug("Ignoring own proxy peer info: {} vs {}", peerId, serverId);
                         return;
                     }
 
                     // Register this peer
-                    logger.info("Registering peer proxy: {} at {}:{}", peerId, host, rmiPort);
-                    peerManager.registerPeer(host, rmiPort, peerId);
+                    logger.info("Registering peer proxy: {} at {}:{}", peerId, host, peerRmiPort);
+                    peerManager.registerPeer(host, peerRmiPort, peerId);
 
                     // Send our info back to the peer if this isn't a reply already
                     if (!"reply".equals(peerInfo.length > 3 ? peerInfo[3] : "")) {
@@ -143,7 +152,7 @@ public class ProxyServer {
             String[] peerInfo = new String[] {
                     serverId,
                     SERVER_IP,
-                    String.valueOf(rmiPort),
+                    String.valueOf(rmiPort), // Make sure this is the RMI port, not the server port
                     flag
             };
 
@@ -159,6 +168,37 @@ public class ProxyServer {
 
         } catch (Exception e) {
             logger.error("Error sending peer info", e);
+        }
+    }
+
+    // Add this method to do a self-test after initializing the peer manager
+    // Fix RMI self-test method
+    private void testRmiConnection() {
+        try {
+            logger.info("Testing RMI self-connection");
+            
+            // Use consistent service name - don't add "Proxy-" prefix if serverId already has it
+            String serviceName = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
+            logger.info("Looking up RMI service: {}", serviceName);
+            
+            Registry selfRegistry = LocateRegistry.getRegistry(SERVER_IP, rmiPort);
+            ProxyRMI selfTest = (ProxyRMI) selfRegistry.lookup(serviceName);
+            String testId = selfTest.getProxyId();
+            logger.info("RMI self-test successful, returned ID: {}", testId);
+            
+            // Add a test work order to see if search works
+            WorkOrder testOrder = new WorkOrder(9999, "Test Order", "RMI Test Description");
+            cache.add(testOrder);
+            
+            // Try searching for it
+            WorkOrder foundOrder = selfTest.searchCache(9999);
+            if (foundOrder != null) {
+                logger.info("RMI search test successful, found: {}", foundOrder);
+            } else {
+                logger.error("RMI search test failed - order not found!");
+            }
+        } catch (Exception e) {
+            logger.error("RMI self-test failed: {}", e.getMessage(), e);
         }
     }
 
@@ -387,7 +427,7 @@ public class ProxyServer {
     // Use existing main method
     public static void main(String[] args) {
         SERVER_PORT = 22220;
-        serverId = "Proxy-3";
+        serverId = "Proxy-1";
         new ProxyServer(SERVER_PORT, serverId);
     }
 }

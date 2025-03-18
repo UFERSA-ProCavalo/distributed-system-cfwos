@@ -220,4 +220,13 @@ public class SocketMessageTransport {
     public boolean isRunning() {
         return running.get() && !socket.isClosed();
     }
+
+    /**
+     * Set verbose logging on or off
+     */
+    public void setVerboseLogging(boolean verbose) {
+        if (messageBus != null && messageBus instanceof MessageBus) {
+            ((MessageBus) messageBus).setVerboseLogging(verbose);
+        }
+    }
 }

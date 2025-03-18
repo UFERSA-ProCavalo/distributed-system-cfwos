@@ -24,7 +24,30 @@ public class ProxyRMIImpl extends UnicastRemoteObject implements ProxyRMI {
     @Override
     public WorkOrder searchCache(int code) throws RemoteException {
         logger.info("RMI: Remote proxy searching for work order with code {}", code);
-        return cache.searchByCode(new WorkOrder(code, null, null));
+        
+        try {
+            // Print cache details for debugging
+            logger.info("Current cache size: {}", cache.getSize());
+            
+            // Create a search criteria WorkOrder with just the code
+            WorkOrder searchCriteria = new WorkOrder(code, null, null);
+            
+            // Search the cache using our criteria
+            WorkOrder result = cache.searchByCode(searchCriteria);
+            
+            if (result != null) {
+                logger.info("RMI: Found work order with code {} in cache: {}", code, result);
+                logger.info("Result fields: code={}, name={}, description={}", 
+                          result.getCode(), result.getName(), result.getDescription());
+            } else {
+                logger.info("RMI: Work order with code {} not found in cache", code);
+            }
+            
+            return result;
+        } catch (Exception e) {
+            logger.error("RMI: Error searching cache: {}", e.getMessage(), e);
+            throw new RemoteException("Error searching cache", e);
+        }
     }
 
     @Override

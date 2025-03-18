@@ -418,9 +418,31 @@ public class LanternaUI implements Runnable {
                 buttonPanel2.addComponent(showAllButton);
                 buttonPanel2.addComponent(statsButton);
                 mainPanel.addComponent(buttonPanel2);
+                logger.info("" + client.isAdmin());
 
                 // Add separator
                 mainPanel.addComponent(new Separator(Direction.HORIZONTAL));
+
+                // Admin options
+                if (client.isAdmin()) {
+                    mainPanel.addComponent(new Label("Admin Options"));
+                    Button add30ToCache = new Button("Add 30 to cache", () -> {
+                        client.sendDataRequest("ADD30");
+                        updateStatus("Clearing database...");
+                    });
+                    Button add100ToDatabase = new Button("Add 100 to database", () -> {
+                        client.sendDataRequest("ADD100");
+                        updateStatus("Clearing database...");
+                    });
+
+                    mainPanel.addComponent(add30ToCache);
+                    mainPanel.addComponent(add100ToDatabase);
+
+                    logger.info("Admin options displayed");
+
+                    // Add a separator
+                    mainPanel.addComponent(new Separator(Direction.HORIZONTAL));
+                }
 
                 // Results area
                 mainPanel.addComponent(new Label("Server Response"));
@@ -528,7 +550,6 @@ public class LanternaUI implements Runnable {
                     String code = codeField.getText().trim();
                     String name = nameField.getText().trim();
                     String description = descField.getText().trim();
-                    String timestamp = String.valueOf(System.currentTimeMillis());
 
                     // Validation
                     if (code.isEmpty() || name.isEmpty() || description.isEmpty()) {
@@ -903,14 +924,6 @@ public class LanternaUI implements Runnable {
                 codePanel.addComponent(codeField);
                 mainPanel.addComponent(codePanel);
 
-                // Search by name panel
-                Panel namePanel = new Panel(new LinearLayout(Direction.HORIZONTAL));
-                namePanel.addComponent(new Label("Name: ").setLayoutData(
-                        LinearLayout.createLayoutData(LinearLayout.Alignment.Center)));
-                TextBox nameField = new TextBox(new TerminalSize(20, 1));
-                namePanel.addComponent(nameField);
-                mainPanel.addComponent(namePanel);
-
                 mainPanel.addComponent(new EmptySpace(new TerminalSize(0, 1)));
 
                 // Buttons
@@ -996,7 +1009,6 @@ public class LanternaUI implements Runnable {
             }
         });
     }
-
 
     /**
      * Update the status label

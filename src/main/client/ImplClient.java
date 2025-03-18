@@ -30,7 +30,7 @@ public class ImplClient implements Runnable {
 
     // UI
     private LanternaUI lanternaUI;
-    private boolean useLanterna = true; // Default to using Lanterna
+    private boolean isAdmin;
 
     // Utilities
     private final Logger logger;
@@ -47,21 +47,13 @@ public class ImplClient implements Runnable {
 
         // Register message bus subscriptions
         registerMessageHandlers();
-    }
 
-    public ImplClient(Socket initialSocket, Logger logger, boolean useLanterna) {
-        this(initialSocket, logger);
-        this.useLanterna = useLanterna;
-
-        // Always initialize Lanterna UI
         try {
-
             this.lanternaUI = new LanternaUI(this, logger);
             new Thread(lanternaUI, "lanterna-ui-thread").start();
             logger.info("Lanterna UI initialized");
         } catch (Exception e) {
             logger.error("Error initializing Lanterna UI: {}", e);
-            this.useLanterna = false;
             this.shutdown();
         }
     }
@@ -185,6 +177,9 @@ public class ImplClient implements Runnable {
     public void startAuth(String username, String password) {
         if (networkManager.isConnected()) {
             logger.info("Starting authentication with username: {}", username);
+
+            isAdmin = username.equalsIgnoreCase("admin");
+
             String[] credentials = new String[] { username, password };
             sendMessage(MessageType.AUTH_REQUEST, credentials);
         } else {
@@ -473,8 +468,8 @@ public class ImplClient implements Runnable {
         }
     }
 
-    // For testing purposes
-    public boolean isUsingLanterna() {
-        return useLanterna && lanternaUI != null;
+    // Check if the username is "admin"
+    public boolean isAdmin() {
+        return isAdmin;
     }
 }

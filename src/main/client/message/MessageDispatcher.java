@@ -1,6 +1,5 @@
 package main.client.message;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -24,17 +23,17 @@ public class MessageDispatcher implements AutoCloseable {
         this.client = client;
         this.logger = logger;
 
-        // Create thread pool based on available processors
-        this.dispatcherThreadPool = Executors.newFixedThreadPool(
-                Math.max(2, Runtime.getRuntime().availableProcessors() / 2), // At least 2 threads
-                r -> {
-                    Thread t = new Thread(r, "message-dispatcher");
-                    t.setDaemon(true); // Use daemon threads
-                    return t;
-                });
+        // Reduce thread pool size - use a smaller number of threads
+        this.dispatcherThreadPool = Executors.newFixedThreadPool(2, r -> {
+            Thread t = new Thread(r, "message-dispatcher");
+            t.setDaemon(true);
+            // Set lower thread priority to reduce CPU usage
+            t.setPriority(Thread.MIN_PRIORITY);
+            return t;
+        });
 
         registerDefaultHandlers();
-        logger.info("MessageDispatcher initialized with thread pool");
+        logger.info("MessageDispatcher initialized");
     }
 
     private void registerDefaultHandlers() {
@@ -46,18 +45,16 @@ public class MessageDispatcher implements AutoCloseable {
         registerHandler(MessageType.DISCONNECT, new DisconnectHandler());
         registerHandler(MessageType.SERVER_INFO, new ServerInfoHandler());
         registerHandler(MessageType.LOGOUT_RESPONSE, new LogoutResponseHandler());
-        registerHandler(MessageType.RECONNECT, new ReconnectHandler()); // Add this line
+        registerHandler(MessageType.RECONNECT, new ReconnectHandler());
     }
 
     // Updated to use MessageType enum
     public void registerHandler(MessageType messageType, ServiceMessage handler) {
         handlers.put(messageType, handler);
-        // logger.debug("Registered handler for message type: {}", messageType);
     }
 
     public void dispatchMessage(Message message) {
         if (shutdownRequested) {
-            logger.warning("MessageDispatcher is shutting down, message discarded: {}", message);
             return;
         }
 
@@ -65,19 +62,34 @@ public class MessageDispatcher implements AutoCloseable {
         ServiceMessage handler = handlers.get(message.getType());
 
         if (handler != null) {
-            // Dispatch to thread pool
-            dispatcherThreadPool.submit(() -> {
+            // For simple operations, just handle directly in this thread rather than
+            // submitting to thread pool
+            // Only use thread pool for potentially long operations
+            if (isSimpleMessage(message.getType())) {
                 try {
-                    logger.debug("Dispatching message of type {} to handler", message.getType());
                     handler.handle(message, client);
                 } catch (Exception e) {
-                    logger.error("Error in message handler for type {}: {}",
-                            message.getType(), e.getMessage(), e);
+                    logger.error("Error in message handler: {}", e.getMessage());
                 }
-            });
+            } else {
+                // Dispatch to thread pool for more complex operations
+                dispatcherThreadPool.submit(() -> {
+                    try {
+                        handler.handle(message, client);
+                    } catch (Exception e) {
+                        logger.error("Error in message handler: {}", e.getMessage());
+                    }
+                });
+            }
         } else {
-            logger.warning("No handler registered for message type: {}", message.getType());
+            logger.warning("No handler for message type: {}", message.getType());
         }
+    }
+
+    // Helper method to identify simple messages that can be handled synchronously
+    private boolean isSimpleMessage(MessageType type) {
+        return type == MessageType.PING || type == MessageType.PONG ||
+                type == MessageType.DISCONNECT || type == MessageType.ERROR;
     }
 
     @Override
@@ -85,24 +97,16 @@ public class MessageDispatcher implements AutoCloseable {
         shutdownRequested = true;
 
         try {
-            logger.info("Shutting down MessageDispatcher thread pool...");
             dispatcherThreadPool.shutdown();
-
-            if (!dispatcherThreadPool.awaitTermination(3, TimeUnit.SECONDS)) {
-                logger.warning("MessageDispatcher thread pool did not terminate in time, forcing shutdown");
+            if (!dispatcherThreadPool.awaitTermination(1, TimeUnit.SECONDS)) {
                 dispatcherThreadPool.shutdownNow();
             }
-
-            logger.info("MessageDispatcher thread pool shut down successfully");
         } catch (InterruptedException e) {
-            logger.error("MessageDispatcher shutdown interrupted", e);
             Thread.currentThread().interrupt();
+            logger.error("Shutdown interrupted", e);
         }
     }
 
-    /**
-     * Check if the dispatcher is still active
-     */
     public boolean isActive() {
         return !shutdownRequested && !dispatcherThreadPool.isShutdown();
     }

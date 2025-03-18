@@ -1,22 +1,25 @@
 package main.shared.models;
 
+import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-public class WorkOrder {
+public class WorkOrder implements Serializable {
+
+    private static final long serialVersionUID = 1L;
     private int code;
     private String name;
     private String description;
     private String timestamp;
-    private DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
-    // LocalDateTime Formatter
+    // Make the formatter static and transient so it's not serialized
+    private static final transient DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
     public WorkOrder(int code, String name, String description) {
         this.code = code;
         this.name = name;
         this.description = description;
-        this.timestamp = LocalDateTime.now().format(formatter).toString();
+        this.timestamp = LocalDateTime.now().format(formatter);
     }
 
     public WorkOrder(int code, String name, String description, String timestamp) {
@@ -69,11 +72,6 @@ public class WorkOrder {
 
         return code == workOrder.code;
     }
-
-    // @Override
-    // public int hashCode() {
-    // return Integer.hashCode(code);
-    // }
 
     @Override
     public String toString() {

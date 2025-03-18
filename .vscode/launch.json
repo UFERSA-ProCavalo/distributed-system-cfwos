@@ -3,6 +3,27 @@
   "configurations": [
     {
       "type": "java",
+      "name": "Client",
+      "request": "launch",
+      "mainClass": "main.client.Client",
+      "projectName": "distributed-system-cfwos_eb58af45"
+    },
+    {
+      "type": "java",
+      "name": "LocalizationServer",
+      "request": "launch",
+      "mainClass": "main.server.localization.LocalizationServer",
+      "projectName": "distributed-system-cfwos_eb58af45"
+    },
+    {
+      "type": "java",
+      "name": "ProxyServer",
+      "request": "launch",
+      "mainClass": "main.server.proxy.ProxyServer",
+      "projectName": "distributed-system-cfwos_eb58af45"
+    },
+    {
+      "type": "java",
       "name": "Primary Server",
       "request": "launch",
       "mainClass": "main.server.application.ApplicationServer",

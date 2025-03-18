@@ -1,5 +1,7 @@
 package main.shared.utils.list;
 
+import main.shared.models.WorkOrder;
+
 public class LinkedList<V> implements ILinkedList<V> {
 
     // Internal Class Node
@@ -220,12 +222,28 @@ public class LinkedList<V> implements ILinkedList<V> {
         return tail.data;
     }
 
-    public V search(V crit) {
-        Node t = searchNode(crit);
-        if (t == null) {
-            return null;
+    public V search(V criteria) {
+        Node current = head;
+        while (current != null) {
+            V data = current.getData();
+
+            // For WorkOrder objects, compare by code
+            if (data instanceof WorkOrder && criteria instanceof WorkOrder) {
+                WorkOrder woData = (WorkOrder) data;
+                WorkOrder woCriteria = (WorkOrder) criteria;
+
+                if (woData.getCode() == woCriteria.getCode()) {
+                    return data;
+                }
+            }
+            // Otherwise use equals
+            else if (data.equals(criteria)) {
+                return data;
+            }
+
+            current = current.getNext();
         }
-        return t.data;
+        return null;
     }
 
     public boolean isEmpty() {

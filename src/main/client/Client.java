@@ -16,39 +16,24 @@ public class Client {
     private final String SERVER_IP = "localhost";
     private final int SERVER_PORT = 11110;
     private ImplClient implClient;
-    private boolean useLanterna = false;
-    private Scanner scanner;
 
     /**
      * Create a new client with the specified UI mode
      * 
      * @param useLanterna Whether to use Lanterna GUI (true) or console UI (false)
      */
-    public Client(boolean useLanterna) {
+    public Client() {
         // Clear screen
         System.out.println("\033[2J\033[1;1H");
 
         // Configure logger
-        logger.setHideConsoleOutput(!useLanterna); // Only hide output in Lanterna mode
-
-        // Set UI mode
-        this.useLanterna = useLanterna;
-
-        // Create scanner for console input if needed
-        if (!useLanterna) {
-            scanner = new Scanner(System.in);
-        }
+        logger.setHideConsoleOutput(true); // Only hide output in Lanterna mode
 
         // Add shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             logger.info("Client shutting down...");
             disconnect();
-            if (scanner != null) {
-                scanner.close();
-            }
         }));
-
-        logger.info("Client initialized with {} interface", useLanterna ? "graphical" : "console");
         this.run();
     }
 
@@ -117,24 +102,12 @@ public class Client {
         return implClient;
     }
 
-    /**
-     * Main entry point - parses command line arguments to determine UI mode
-     * 
-     * @param args Command line arguments: use --console for console UI,
-     *             --gui or no arguments for Lanterna GUI
-     */
-    public static void main(String[] args) {
-        boolean useConsole = false;
+    public boolean isAdmin(){
+        return implClient.isAdmin();
+    }
 
-        // Parse command line arguments
-        if (args.length > 0) {
-            for (String arg : args) {
-                if (arg.equalsIgnoreCase("--console") || arg.equalsIgnoreCase("-c")) {
-                    useConsole = true;
-                    break;
-                }
-            }
-        }
+    public static void main(String[] args) {
+
 
         // Add shutdown hook to ensure clean disconnect
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -142,6 +115,6 @@ public class Client {
         }));
 
         // Create client with the specified UI mode
-        new Client(!useConsole);
+        new Client();
     }
 }
