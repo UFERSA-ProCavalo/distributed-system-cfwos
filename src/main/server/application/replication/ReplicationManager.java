@@ -60,12 +60,14 @@ public class ReplicationManager implements DatabaseReplicator, ServerCoordinator
             logger.info("RMI Registry created at port {}", rmiPort);
 
             // Export this object
+
             DatabaseReplicator replicatorStub = (DatabaseReplicator) UnicastRemoteObject.exportObject(this, 0);
-            ServerCoordinator coordinatorStub = (ServerCoordinator) UnicastRemoteObject.exportObject(this, 0);
+            // ServerCoordinator coordinatorStub = (ServerCoordinator)
+            // UnicastRemoteObject.exportObject(this, 0);
 
             // Bind to registry
             registry.rebind("DatabaseReplicator", replicatorStub);
-            registry.rebind("ServerCoordinator", coordinatorStub);
+            // registry.rebind("ServerCoordinator", coordinatorStub);
 
             logger.info("Replication services registered successfully");
 

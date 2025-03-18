@@ -15,7 +15,6 @@ import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 
 import main.client.ImplClient;
-import main.client.MenuState;
 import main.shared.log.Logger;
 
 import java.io.IOException;
@@ -710,8 +709,161 @@ public class LanternaUI implements Runnable {
      * Show update work order screen
      */
     private void showUpdateWorkOrderScreen() {
-        // Implementation similar to showWorkOrderMenu but with fields for updating a
-        // work order
+        logger.info("Showing update work order screen");
+
+        invokeLater(() -> {
+            try {
+                // Clear existing components
+                mainPanel.removeAllComponents();
+
+                // Add header
+                Label headerLabel = new Label("Update Work Order")
+                        .addStyle(SGR.BOLD).setForegroundColor(TextColor.ANSI.BLUE);
+                mainPanel.addComponent(headerLabel);
+                mainPanel.addComponent(new EmptySpace(new TerminalSize(0, 1)));
+
+                // Add status displays
+                Panel statusPanel = new Panel(new LinearLayout(Direction.HORIZONTAL).setSpacing(3));
+                statusPanel.addComponent(new Label("Status: "));
+                statusPanel.addComponent(statusLabel);
+                mainPanel.addComponent(statusPanel);
+
+                Panel connectionPanel = new Panel(new LinearLayout(Direction.HORIZONTAL).setSpacing(3));
+                connectionPanel.addComponent(new Label("Connection: "));
+                connectionPanel.addComponent(connectionLabel);
+                mainPanel.addComponent(connectionPanel);
+
+                // Add a separator
+                mainPanel.addComponent(new Separator(Direction.HORIZONTAL));
+
+                // Work order form
+                mainPanel.addComponent(new Label("Enter Work Order Details:"));
+                mainPanel.addComponent(new EmptySpace(new TerminalSize(0, 1)));
+
+                // Code field
+                Panel codePanel = new Panel(new LinearLayout(Direction.HORIZONTAL));
+                codePanel.addComponent(new Label("Code:       ").setLayoutData(
+                        LinearLayout.createLayoutData(LinearLayout.Alignment.Center)));
+                TextBox codeField = new TextBox(new TerminalSize(15, 1));
+                codePanel.addComponent(codeField);
+
+                // Lookup button
+                Button lookupButton = new Button("Look Up", () -> {
+                    String code = codeField.getText().trim();
+
+                    // Validation
+                    if (code.isEmpty()) {
+                        showError("Work order code is required!");
+                        return;
+                    }
+
+                    try {
+                        // Verify code is numeric
+                        int codeNum = Integer.parseInt(code);
+
+                        // Send search request
+                        client.sendDataRequest("SEARCH|" + code);
+                        updateStatus("Looking up work order: " + code);
+                    } catch (NumberFormatException e) {
+                        showError("Code must be a number");
+                    }
+                });
+                codePanel.addComponent(lookupButton);
+                mainPanel.addComponent(codePanel);
+
+                // Name field
+                Panel namePanel = new Panel(new LinearLayout(Direction.HORIZONTAL));
+                namePanel.addComponent(new Label("Name:       ").setLayoutData(
+                        LinearLayout.createLayoutData(LinearLayout.Alignment.Center)));
+                TextBox nameField = new TextBox(new TerminalSize(30, 1));
+                namePanel.addComponent(nameField);
+                mainPanel.addComponent(namePanel);
+
+                // Description field
+                Panel descPanel = new Panel(new LinearLayout(Direction.HORIZONTAL));
+                descPanel.addComponent(new Label("Description:").setLayoutData(
+                        LinearLayout.createLayoutData(LinearLayout.Alignment.Center)));
+                TextBox descField = new TextBox(new TerminalSize(30, 3));
+                descPanel.addComponent(descField);
+                mainPanel.addComponent(descPanel);
+
+                mainPanel.addComponent(new EmptySpace(new TerminalSize(0, 1)));
+
+                // Add result area to display server response
+                mainPanel.addComponent(new Label("Server Response:"));
+                resultsArea = new TextBox(new TerminalSize(60, 5));
+                resultsArea.setReadOnly(true);
+                mainPanel.addComponent(resultsArea);
+
+                // Buttons panel
+                Panel buttonPanel = new Panel(new LinearLayout(Direction.HORIZONTAL).setSpacing(3));
+
+                // Update button
+                Button updateButton = new Button("Update Work Order", () -> {
+                    String code = codeField.getText().trim();
+                    String name = nameField.getText().trim();
+                    String description = descField.getText().trim();
+                    // fix timestamp
+                    String timestamp = String.valueOf(System.currentTimeMillis());
+
+                    // Validation
+                    if (code.isEmpty() || name.isEmpty() || description.isEmpty()) {
+                        showError("All fields are required!");
+                        return;
+                    }
+
+                    try {
+                        // Verify code is numeric
+                        int codeNum = Integer.parseInt(code);
+
+                        // Show confirmation dialog
+                        MessageDialog.showMessageDialog(
+                                gui,
+                                "Confirm Update",
+                                "Are you sure you want to update work order #" + code + "?",
+                                MessageDialogButton.Yes,
+                                MessageDialogButton.No);
+
+                        // Format: UPDATE|code|name|description
+                        String request = String.format("UPDATE|%s|%s|%s", code, name, description);
+                        client.sendDataRequest(request);
+                        updateStatus("Updating work order with code: " + code);
+                    } catch (NumberFormatException e) {
+                        showError("Code must be a number");
+                    }
+                });
+
+                // Clear button
+                Button clearButton = new Button("Clear", () -> {
+                    codeField.setText("");
+                    nameField.setText("");
+                    descField.setText("");
+                    resultsArea.setText("");
+                    codeField.takeFocus();
+                });
+
+                // Back button
+                Button backButton = new Button("Back to Menu", this::showWorkOrderMenu);
+
+                buttonPanel.addComponent(updateButton);
+                buttonPanel.addComponent(clearButton);
+                buttonPanel.addComponent(backButton);
+                mainPanel.addComponent(buttonPanel.setLayoutData(
+                        LinearLayout.createLayoutData(LinearLayout.Alignment.Center)));
+
+                // Set initial focus
+                mainWindow.setFocusedInteractable(codeField);
+
+                // Force refresh
+                if (screen != null) {
+                    screen.refresh();
+                }
+
+                logger.debug("Update work order screen displayed");
+            } catch (Exception e) {
+                logger.error("Error showing update work order screen", e);
+            }
+        });
     }
 
     /**
@@ -845,14 +997,6 @@ public class LanternaUI implements Runnable {
         });
     }
 
-    /**
-     * Get credentials from the user
-     */
-    public String[] getCredentials() {
-        // This would typically use a dialog, but we're handling auth through the main
-        // UI now
-        return null;
-    }
 
     /**
      * Update the status label

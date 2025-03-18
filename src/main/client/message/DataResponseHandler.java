@@ -57,6 +57,25 @@ public class DataResponseHandler implements ServiceMessage {
         if (message != null) {
             responseContent.append("Message: ").append(message).append("\n\n");
         }
+        // IF those fields exist, add them to the response. STATS format
+        // response.put("status", "success");
+        // response.put("size", String.valueOf(database.getSize()));
+        // response.put("height", String.valueOf(database.getTreeHeight()));
+        // response.put("balanceCounter", String.valueOf(database.getBalanceCounter()));
+
+        // Display STATS if present
+        if (responseMap.containsKey("size")) {
+            responseContent.append("Database Stats:\n");
+            responseContent.append("  Size: ").append(responseMap.get("size")).append("\n");
+            responseContent.append("  Height: ").append(responseMap.get("height")).append("\n");
+            responseContent.append("  Balance Counter: ").append(responseMap.get("balanceCounter")).append("\n");
+        }
+
+        // Display Database contents if present
+        if (responseMap.containsKey("database_content")) {
+            responseContent.append("\nDatabase Contents:\n");
+            responseContent.append(responseMap.get("database_content")).append("\n");
+        }
 
         // Work order details
         if (responseMap.containsKey("code")) {

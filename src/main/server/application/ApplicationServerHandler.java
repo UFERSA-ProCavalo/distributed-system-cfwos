@@ -231,7 +231,7 @@ public class ApplicationServerHandler implements Runnable {
         if (errorCount > 0) {
             response.put("status", "error");
             response.put("message", String.valueOf(errorCount) + " errors found\n" +
-                    String.join("; ", errorMessages));
+                    String.join(";\n ", errorMessages));
             return;
         }
 
@@ -262,6 +262,13 @@ public class ApplicationServerHandler implements Runnable {
         }
 
         int code = Integer.parseInt(requestParts[1]);
+
+        if (database.searchWorkOrder(code) == null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " not found!");
+            return;
+        }
+
         database.removeWorkOrder(code);
 
         response.put("status", "success");
@@ -276,6 +283,14 @@ public class ApplicationServerHandler implements Runnable {
         }
 
         int code = Integer.parseInt(requestParts[1]);
+
+        if (database.searchWorkOrder(code) == null) {
+            response.put("status", "error");
+            response.put("message", "Work order with code " + code + " not found!");
+            return;
+
+        }
+
         String name = requestParts[2];
         String description = requestParts[3];
 
@@ -285,7 +300,6 @@ public class ApplicationServerHandler implements Runnable {
         if (timestamp == null) {
             database.updateWorkOrder(code, name, description, timestamp);
         } else {
-
             database.updateWorkOrder(code, name, description, timestamp);
         }
 
