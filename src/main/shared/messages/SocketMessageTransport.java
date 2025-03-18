@@ -169,7 +169,7 @@ public class SocketMessageTransport {
     /**
      * Send a message over this socket connection
      */
-    public synchronized void sendMessage(Message message) {
+    public void sendMessage(Message message) {
         if (!running.get() || socket.isClosed()) {
             logger.warning("Cannot send message - connection is closed");
             return;

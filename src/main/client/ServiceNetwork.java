@@ -116,16 +116,6 @@ public class ServiceNetwork {
     }
 
     /**
-     * Process a single message from the socket
-     */
-    public boolean readMessage() {
-        // This method is now deprecated and only returns connection status
-        // Messages are read automatically by the background thread
-        logger.debug("readMessage() called, but messages are now processed automatically");
-        return isConnected();
-    }
-
-    /**
      * New method to check if messages are being processed
      */
     public boolean isProcessingMessages() {

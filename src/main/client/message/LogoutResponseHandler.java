@@ -1,7 +1,6 @@
 package main.client.message;
 
 import main.client.ImplClient;
-import main.client.MenuState; // Changed from State to MenuState
 import main.shared.messages.Message;
 
 public class LogoutResponseHandler implements ServiceMessage {

@@ -10,6 +10,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.HashMap;
+import java.net.InetAddress;
 
 import main.server.localization.LocalizationServerHandler;
 import main.server.proxy.auth.AuthService;
@@ -78,11 +80,6 @@ public class ProxyServer {
         // Inicializa o sistema de cache
         logger.info("Sistema de cache inicializado com política FIFO");
 
-        // Initialize RMI peer manager
-        peerManager = new ProxyPeerManager(String.valueOf(SERVER_PORT), cache, logger, rmiPort);
-        peerManager.startRMI();
-        logger.info("RMI peer manager initialized on port {}", rmiPort);
-
         // Add shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -101,47 +98,33 @@ public class ProxyServer {
         // Wait for registration to complete
         waitForRegistration();
 
-        // Test RMI connection
-        testRmiConnection();
-
         this.run();
     }
 
     // Add new method to handle proxy peer info messages
+    // Add handler method for PROXY_PEER_INFO
     private void handleProxyPeerInfo(Message message) {
-        if (message.getType() == MessageType.PROXY_PEER_INFO) {
-            try {
-                logger.info("Received PROXY_PEER_INFO from {}", message.getSender());
+        try {
+            if (message.getPayload() instanceof Map) {
+                Map<?, ?> peerInfo = (Map<?, ?>) message.getPayload();
+                String peerId = peerInfo.get("id").toString();
 
-                // Extract peer information
-                String[] peerInfo = (String[]) message.getPayload();
-                if (peerInfo.length >= 3) {
-                    String peerId = peerInfo[0];
-                    String host = peerInfo[1];
-                    int peerRmiPort = Integer.parseInt(peerInfo[2]);
-
-                    // Don't register ourselves - compare without the "Proxy-" prefix if present
-                    String strippedPeerId = peerId.startsWith("Proxy-") ? peerId.substring(6) : peerId;
-                    String strippedServerId = serverId.startsWith("Proxy-") ? serverId.substring(6) : serverId;
-
-                    if (strippedPeerId.equals(strippedServerId)) {
-                        logger.debug("Ignoring own proxy peer info: {} vs {}", peerId, serverId);
-                        return;
-                    }
-
-                    // Register this peer
-                    logger.info("Registering peer proxy: {} at {}:{}", peerId, host, peerRmiPort);
-                    peerManager.registerPeer(host, peerRmiPort, peerId);
-
-                    // Send our info back to the peer if this isn't a reply already
-                    if (!"reply".equals(peerInfo.length > 3 ? peerInfo[3] : "")) {
-                        sendPeerInfo(message.getSender(), "reply");
-                    }
+                // Skip if it's our own ID
+                if (peerId.equals(serverId)) {
+                    return;
                 }
 
-            } catch (Exception e) {
-                logger.error("Error handling proxy peer info", e);
+                int rmiPort = Integer.parseInt(peerInfo.get("rmiPort").toString());
+                String address = peerInfo.get("address").toString();
+
+                // Register this peer with the peer manager
+                logger.info("Received peer info for {}, connecting via RMI", peerId);
+                peerManager.registerPeer(address, rmiPort, peerId);
+
+                // The registerPeer method will now handle peer discovery automatically
             }
+        } catch (Exception e) {
+            logger.error("Error handling PROXY_PEER_INFO: {}", e.getMessage());
         }
     }
 
@@ -176,20 +159,21 @@ public class ProxyServer {
     private void testRmiConnection() {
         try {
             logger.info("Testing RMI self-connection");
-            
-            // Use consistent service name - don't add "Proxy-" prefix if serverId already has it
+
+            // Use consistent service name - don't add "Proxy-" prefix if serverId already
+            // has it
             String serviceName = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
             logger.info("Looking up RMI service: {}", serviceName);
-            
+
             Registry selfRegistry = LocateRegistry.getRegistry(SERVER_IP, rmiPort);
             ProxyRMI selfTest = (ProxyRMI) selfRegistry.lookup(serviceName);
             String testId = selfTest.getProxyId();
             logger.info("RMI self-test successful, returned ID: {}", testId);
-            
+
             // Add a test work order to see if search works
             WorkOrder testOrder = new WorkOrder(9999, "Test Order", "RMI Test Description");
             cache.add(testOrder);
-            
+
             // Try searching for it
             WorkOrder foundOrder = selfTest.searchCache(9999);
             if (foundOrder != null) {
@@ -237,31 +221,61 @@ public class ProxyServer {
         }
     }
 
+    // Add a method to send proxy peer info after successful registration
+    private void sendProxyPeerInfo() {
+        try {
+            // Ensure we have a valid server ID with proper prefix
+            String normalizedServerId = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
+
+            // Create peer info payload
+            Map<String, Object> peerInfo = new HashMap<>();
+            peerInfo.put("id", normalizedServerId);
+            peerInfo.put("port", SERVER_PORT);
+            peerInfo.put("rmiPort", rmiPort);
+            peerInfo.put("address", InetAddress.getLocalHost().getHostAddress());
+
+            // Create the message
+            Message peerInfoMsg = new Message(
+                    MessageType.PROXY_PEER_INFO,
+                    normalizedServerId,
+                    "LocalizationServer",
+                    peerInfo);
+
+            // Send through the localization transport
+            localizationTransport.sendMessage(peerInfoMsg);
+            logger.info("Sent PROXY_PEER_INFO to localization server");
+        } catch (Exception e) {
+            logger.error("Error sending PROXY_PEER_INFO: {}", e.getMessage());
+        }
+    }
+
+    // Modify the registration response handler to send peer info on success
     private void handleRegistrationResponse(Message message) {
-        if (message.getType() == MessageType.PROXY_REGISTRATION_RESPONSE) {
-            Object status = message.getPayload();
+        String status = message.getPayload().toString();
 
-            if ("SUCCESS".equals(status)) {
-                logger.info("Successfully registered with localization server as {}", serverId);
+        if ("SUCCESS".equals(status)) {
+            logger.info("Registration successful with localization server");
+            registrationComplete = true;
 
-                // Mark registration as complete and notify waiting threads
-                synchronized (registrationLock) {
-                    registrationComplete = true;
-                    registrationLock.notifyAll();
-                }
+            // Initialize RMI peer manager
+            peerManager = new ProxyPeerManager(String.valueOf(SERVER_PORT), cache, logger, rmiPort);
+            peerManager.startRMI();
+            logger.info("RMI peer manager initialized on port {}", rmiPort);
 
-            } else if ("ALREADY_TAKEN".equals(status)) {
-                // Try with different server ID and port
-                handleRegistrationConflict();
-            } else {
-                logger.error("Unknown registration response: {}", status);
+            // Test RMI connection
+            testRmiConnection();
 
-                // Mark registration as failed but complete
-                synchronized (registrationLock) {
-                    registrationComplete = true;
-                    registrationLock.notifyAll();
-                }
-            }
+            // Announce ourselves to the peer network
+            announceToPeerNetwork();
+
+            // Send peer info after successful registration
+            sendProxyPeerInfo();
+        } else if ("ALREADY_TAKEN".equals(status)) {
+            logger.error("Registration failed: Server ID already taken");
+            // Could implement retry logic with modified server ID
+            handleRegistrationConflict();
+        } else {
+            logger.error("Registration failed: {}", status);
         }
     }
 
@@ -424,10 +438,31 @@ public class ProxyServer {
         }
     }
 
-    // Use existing main method
     public static void main(String[] args) {
         SERVER_PORT = 22220;
-        serverId = "Proxy-1";
+        serverId = "Proxy-3";
         new ProxyServer(SERVER_PORT, serverId);
+    }
+
+    // Add a new method to self-announce to the peer network
+
+    /**
+     * Announce this proxy to the peer network
+     * Called after successful registration with localization server
+     */
+    private void announceToPeerNetwork() {
+        try {
+            // Ensure proxy ID has the proper format
+            String normalizedServerId = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
+
+            // Use the normalized ID for RMI binding
+            String myHost = InetAddress.getLocalHost().getHostAddress();
+
+            // Now when we get peer info through localization server,
+            // our peer RMI will handle the rest of the peer discovery automatically
+            logger.info("Ready to discover peers. Will connect and exchange peer info through RMI.");
+        } catch (Exception e) {
+            logger.error("Error announcing to peer network: {}", e.getMessage());
+        }
     }
 }

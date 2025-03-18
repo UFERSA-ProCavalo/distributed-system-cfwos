@@ -1,12 +1,17 @@
 package main.server.application;
 
+import java.net.MalformedURLException;
 import java.net.Socket;
+import java.rmi.Naming;
+import java.rmi.NotBoundException;
+import java.rmi.RemoteException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import main.server.application.database.Database;
+import main.server.application.replication.DatabaseService;
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
@@ -17,27 +22,28 @@ import main.shared.models.WorkOrder;
 public class ApplicationServerHandler implements Runnable {
     private boolean connected = true;
     private final String clientId;
-    private String server = "AppServer";
+    private final ApplicationServer server;
 
     private final Socket clientSocket;
     private final Logger logger;
     private MessageBus messageBus;
     private SocketMessageTransport transport;
+    private int RMI_PORT;
+    private DatabaseService dbStub;
 
     // Singleton database instance - shared across all handlers
-    private static final Database database;
+    private Database database;
     // Thread safety for database operations
-    private static final Object lock = new Object();
     private static final Object databaseLock = new Object();
 
-    // Initialize database
-    static {
-        database = new Database();
-    }
+    public ApplicationServerHandler(Socket clientSocket, Logger logger, ApplicationServer server) {
 
-    public ApplicationServerHandler(Socket clientSocket, Logger logger) {
         this.clientSocket = clientSocket;
         this.logger = logger;
+        this.server = server;
+
+        this.database = server.getDatabase();
+        RMI_PORT = server.getRMI_PORT();
 
         this.clientId = "AppServer-"
                 + clientSocket.getInetAddress().getHostAddress()
@@ -90,93 +96,92 @@ public class ApplicationServerHandler implements Runnable {
     }
 
     private void handleDataRequest(Message message) {
-        synchronized (lock) {
-            try {
-                logger.info("Handling DATA_REQUEST message from {}: {}", message.getSender(), message.getPayload());
+        try {
+            logger.info("Handling DATA_REQUEST message from {}: {}", message.getSender(), message.getPayload());
 
-                Map<String, String> response = new HashMap<>();
-                String operation = null;
+            Map<String, String> response = new HashMap<>();
+            String operation = null;
 
-                // Get the thread name/id for debugging
-                String threadInfo = Thread.currentThread().getName() + "-" + Thread.currentThread().getId();
-                logger.info("[{}] Requesting database lock", threadInfo);
+            // Get the thread name/id for debugging
+            String threadInfo = Thread.currentThread().getName() + "-" + Thread.currentThread().getId();
+            logger.info("[{}] Requesting database lock", threadInfo);
 
-                // Log the time it takes to acquire the lock
-                long startLock = System.currentTimeMillis();
+            // Log the time it takes to acquire the lock
+            long startLock = System.currentTimeMillis();
 
-                synchronized (databaseLock) {
-                    long lockTime = System.currentTimeMillis() - startLock;
-                    logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
+            synchronized (databaseLock) {
+                long lockTime = System.currentTimeMillis() - startLock;
+                logger.info("[{}] Acquired database lock after {}ms", threadInfo, lockTime);
 
-                    if (message.getPayload() == null) {
-                        throw new IllegalArgumentException("Request payload cannot be null");
-                    }
-
-                    String[] requestParts = message.getPayload().toString().split("\\|");
-                    operation = requestParts[0].toUpperCase();
-
-                    // Process the data request using the database
-                    switch (operation) {
-                        case "ADD":
-                            handleAddOperation(requestParts, response);
-                            break;
-                        case "REMOVE":
-                            handleRemoveOperation(requestParts, response);
-                            break;
-                        case "UPDATE":
-                            handleUpdateOperation(requestParts, response);
-                            break;
-                        case "SEARCH":
-                            handleSearchOperation(requestParts, response);
-                            break;
-                        case "STATS":
-                            handleStatsOperation(response);
-                            break;
-                        case "SHOW":
-                            handleShowOperation(requestParts, response);
-                            break;
-                        case "ADD60":
-                            add60toDatabase(response);
-                            break;
-                        case "TESTE":
-                            // handleTesteOperation(response);
-                        default:
-                            response.put("status", "error");
-                            response.put("message", "Unknown operation: " + operation);
-                    }
-
-                    logger.info("[{}] Finished database operation", threadInfo);
+                if (message.getPayload() == null) {
+                    throw new IllegalArgumentException("Request payload cannot be null");
                 }
 
-                // Create response message
-                Message responseMsg = new Message(
+                String[] requestParts = message.getPayload().toString().split("\\|");
+                operation = requestParts[0].toUpperCase();
+
+                // Process the data request using the database
+                switch (operation) {
+                    case "ADD":
+                        handleAddOperation(requestParts, response);
+
+                        break;
+                    case "REMOVE":
+                        handleRemoveOperation(requestParts, response);
+                        break;
+                    case "UPDATE":
+                        handleUpdateOperation(requestParts, response);
+                        break;
+                    case "SEARCH":
+                        handleSearchOperation(requestParts, response);
+                        break;
+                    case "STATS":
+                        handleStatsOperation(response);
+                        break;
+                    case "SHOW":
+                        handleShowOperation(requestParts, response);
+                        break;
+                    case "ADD60":
+                        add60toDatabase(response);
+                        break;
+                    case "TESTE":
+                        // handleTesteOperation(response);
+                    default:
+                        response.put("status", "error");
+                        response.put("message", "Unknown operation: " + operation);
+                }
+
+                logger.info("[{}] Finished database operation", threadInfo);
+            }
+
+            // Create response message
+            Message responseMsg = new Message(
+                    MessageType.DATA_RESPONSE,
+                    message.getRecipient(),
+                    message.getSender(),
+                    response);
+
+            transport.sendMessage(responseMsg);
+            logger.info("Sent data response to client for operation: {}", operation);
+
+        } catch (Exception e) {
+            logger.error("Error handling DATA_REQUEST", e);
+
+            // Send error message back to client
+            try {
+                Map<String, String> errorResponse = new HashMap<>();
+                errorResponse.put("status", "error");
+                errorResponse.put("message", e.getMessage());
+
+                Message errorMsg = new Message(
                         MessageType.DATA_RESPONSE,
                         message.getRecipient(),
                         message.getSender(),
-                        response);
+                        errorResponse);
 
-                transport.sendMessage(responseMsg);
-                logger.info("Sent data response to client for operation: {}", operation);
-
-            } catch (Exception e) {
-                logger.error("Error handling DATA_REQUEST", e);
-
-                // Send error message back to client
-                try {
-                    Map<String, String> errorResponse = new HashMap<>();
-                    errorResponse.put("status", "error");
-                    errorResponse.put("message", e.getMessage());
-
-                    Message errorMsg = new Message(
-                            MessageType.DATA_RESPONSE,
-                            message.getRecipient(),
-                            message.getSender(),
-                            errorResponse);
-
-                    transport.sendMessage(errorMsg);
-                } catch (Exception ex) {
-                    logger.error("Failed to send error response", ex);
-                }
+                transport.sendMessage(errorMsg);
+            } catch (Exception ex) {
+                logger.error("Failed to send error response", ex);
             }
         }
     }
@@ -245,6 +250,13 @@ public class ApplicationServerHandler implements Runnable {
             database.addWorkOrder(code, name, description, timestamp);
         } else {
             database.addWorkOrder(code, name, description);
+        }
+
+        // replicate add work order
+        try {
+            server.replicateAddWorkOrder(code, name, description);
+        } catch (Exception e) {
+            logger.error("Error replicating add work order", e);
         }
 
         response.put("status", "success");

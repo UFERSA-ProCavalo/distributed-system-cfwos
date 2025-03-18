@@ -119,12 +119,22 @@ public class Database {
      */
     public void syncFromMap(Map<Integer, WorkOrder> sourceMap) {
         // Clear existing database
-        clearDatabase();
-        // Synchronize the database with the provided map
+        synchronized (lock) {
+            clearDatabase();
+            // Synchronize the database with the provided map
 
-        // Add all work orders from the map
-        for (WorkOrder order : sourceMap.values()) {
-            addWorkOrder(order.getCode(), order.getName(), order.getDescription(), order.getTimestamp());
+            // Add all work orders from the map
+            // for (WorkOrder order : sourceMap.values()) {
+            // addWorkOrder(order.getCode(), order.getName(), order.getDescription(),
+            // order.getTimestamp());
+
+            for (WorkOrder wo : sourceMap.values()) {
+                WorkOrder workOrder = new WorkOrder(wo.getCode(),
+                        wo.getName(),
+                        wo.getDescription(),
+                        wo.getTimestamp());
+                database.Insert(wo.getCode(), workOrder);
+            }
         }
     }
 }

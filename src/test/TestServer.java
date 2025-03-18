@@ -238,31 +238,10 @@ public class TestServer implements Runnable {
          * Register handlers for all message types
          */
         private void registerMessageHandlers() {
-            messageBus.subscribe(MessageType.START_REQUEST, this::handleStartRequest);
             messageBus.subscribe(MessageType.AUTH_REQUEST, this::handleAuthRequest);
             messageBus.subscribe(MessageType.DATA_REQUEST, this::handleDataRequest);
             messageBus.subscribe(MessageType.LOGOUT_REQUEST, this::handleLogoutRequest);
             messageBus.subscribe(MessageType.DISCONNECT, this::handleDisconnect);
-        }
-
-        /**
-         * Handle initial connection request
-         */
-        private void handleStartRequest(Message message) {
-            logger.info("Received START_REQUEST from {}", message.getSender());
-
-            try {
-                // Send welcome response
-                Message response = new Message(
-                        MessageType.START_RESPONSE,
-                        messageBus.getComponentName(),
-                        message.getSender(),
-                        "Welcome to test server!");
-                transport.sendMessage(response);
-
-            } catch (Exception e) {
-                logger.error("Error handling START_REQUEST", e);
-            }
         }
 
         /**

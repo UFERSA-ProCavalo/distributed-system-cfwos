@@ -38,7 +38,6 @@ public class MessageDispatcher implements AutoCloseable {
 
     private void registerDefaultHandlers() {
         // Register all default message handlers using enum values
-        registerHandler(MessageType.START_RESPONSE, new StartResponseHandler());
         registerHandler(MessageType.AUTH_RESPONSE, new AuthResponseHandler());
         registerHandler(MessageType.DATA_RESPONSE, new DataResponseHandler());
         registerHandler(MessageType.ERROR, new ErrorHandler());

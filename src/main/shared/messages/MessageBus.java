@@ -20,7 +20,7 @@ public class MessageBus {
     // Use ConcurrentHashMap to reduce synchronization overhead
     private final Map<MessageType, List<Consumer<Message>>> subscribers = new ConcurrentHashMap<>();
     private String componentName;
-    private boolean shutdownRequested = false;
+    private volatile boolean shutdownRequested = false;
 
     // Add a logging level control to reduce excessive logging
     private boolean verboseLogging = false;
@@ -95,6 +95,7 @@ public class MessageBus {
     }
 
     /**
+<<<<<<< HEAD
      * Publish a message to subscribers
      */
     public void publish(Message message) {
@@ -129,6 +130,8 @@ public class MessageBus {
     }
 
     /**
+=======
+>>>>>>> 37a880c (feat(application)!: passive replication)
      * Process a received message asynchronously
      */
     public void receive(Message message) {

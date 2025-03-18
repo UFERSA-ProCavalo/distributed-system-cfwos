@@ -13,7 +13,6 @@ public enum MessageType {
     RECONNECT,
 
     // Server -> Client
-    START_RESPONSE,
     AUTH_RESPONSE,
     LOGOUT_RESPONSE,
     DATA_RESPONSE,

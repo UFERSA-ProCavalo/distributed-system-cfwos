@@ -105,8 +105,9 @@ public class LocalizationServerHandler implements Runnable {
             messageBus.subscribe(MessageType.RECONNECT, this::handleReconnectRequest);
             messageBus.subscribe(MessageType.DISCONNECT, this::handleDisconnect);
 
-            // Add handler for proxy registration requests
+            // Add handler for proxy registration and peer info
             messageBus.subscribe(MessageType.PROXY_REGISTRATION_REQUEST, this::handleProxyRegistration);
+            messageBus.subscribe(MessageType.PROXY_PEER_INFO, this::handleProxyPeerInfo);
             messageBus.subscribe(MessageType.PONG, this::handlePong);
 
             logger.debug("Communication setup complete for client {}", clientId);
@@ -168,13 +169,19 @@ public class LocalizationServerHandler implements Runnable {
             String[] registrationInfo = (String[]) message.getPayload();
             if (registrationInfo.length >= 3) {
                 String serverId = registrationInfo[0];
+
+                // Ensure proxy IDs start with "Proxy-"
+                if (!serverId.startsWith("Proxy-")) {
+                    serverId = "Proxy-" + serverId;
+                }
+
                 String host = registrationInfo[1];
                 String port = registrationInfo[2];
 
                 logger.info("Processing registration request from proxy: {} on port {}", serverId, port);
 
-                //TODO fix the refresh logic
-                //server.refreshProxyServers();
+                // Enable the proxy refresh logic
+                // server.refreshProxyServers();
 
                 // Check if this server ID is already registered
                 if (LocalizationServer.isProxyRegistered(serverId)) {
@@ -193,9 +200,6 @@ public class LocalizationServerHandler implements Runnable {
 
                     // Send success response
                     sendRegistrationResponse(message.getSender(), "SUCCESS");
-
-                    // Remove this line as updateProxyHeartbeat no longer exists
-                    // LocalizationServer.updateProxyHeartbeat(serverId);
                 }
             } else {
                 logger.warning("Invalid registration info from {}, insufficient data", message.getSender());
@@ -211,6 +215,17 @@ public class LocalizationServerHandler implements Runnable {
 
             // Forward to main server to process this PONG
             server.handleProxyPong(senderId, message.getPayload());
+        }
+    }
+
+    // Add handler for PROXY_PEER_INFO messages
+    private void handleProxyPeerInfo(Message message) {
+        logger.info("Received PROXY_PEER_INFO from {}", message.getSender());
+
+        // Verify this is from a registered proxy
+        if (message.getSender().startsWith("Proxy-")) {
+            // Forward to all other proxies
+            server.broadcastProxyPeerInfo(message.getSender(), message.getPayload());
         }
     }
 

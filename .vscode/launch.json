@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "version": "0.0.0",
   "configurations": [
     {
@@ -39,4 +40,46 @@
       "console": "integratedTerminal"
     }
   ]
+=======
+    "version": "0.0.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Client",
+            "request": "launch",
+            "mainClass": "main.client.Client",
+            "projectName": "distributed-system-cfwos_1acd9086"
+        },
+        {
+            "type": "java",
+            "name": "ProxyServer",
+            "request": "launch",
+            "mainClass": "main.server.proxy.ProxyServer",
+            "projectName": "distributed-system-cfwos_1acd9086"
+        },
+        {
+            "type": "java",
+            "name": "LocalizationServer",
+            "request": "launch",
+            "mainClass": "main.server.localization.LocalizationServer",
+            "projectName": "distributed-system-cfwos_1acd9086"
+        },
+        {
+            "type": "java",
+            "name": "Primary Server",
+            "request": "launch",
+            "mainClass": "main.server.application.ApplicationServer",
+            "args": ["primary"],
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "java",
+            "name": "Backup Server",
+            "request": "launch",
+            "mainClass": "main.server.application.ApplicationServer",
+            "args": ["backup", "localhost", "33331"],
+            "console": "integratedTerminal"
+        }
+    ]
+>>>>>>> 37a880c (feat(application)!: passive replication)
 }

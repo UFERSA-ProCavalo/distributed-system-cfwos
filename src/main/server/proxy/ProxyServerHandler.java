@@ -89,7 +89,9 @@ public class ProxyServerHandler implements Runnable {
                             boolean appMessageProcessed = applicationTransport.readMessage();
                             if (!appMessageProcessed) {
                                 logger.warning("Lost connection to application server");
-                                // Try to reconnect or handle gracefully
+                                // Try to reconnect
+                                connectToApplicationServer();
+
                             }
                         }
 
@@ -207,8 +209,6 @@ public class ProxyServerHandler implements Runnable {
                             clientMessageBus.getComponentName(),
                             message.getSender(),
                             success ? "success" : "failed");
-                    clientTransport.sendMessage(response);
-
                     clientTransport.sendMessage(response);
 
                     if (success) {
@@ -541,47 +541,46 @@ public class ProxyServerHandler implements Runnable {
     }
 
     private void cleanup() {
-        synchronized (lock) {
-            try {
-                // Unsubscribe from message handlers to avoid memory leaks
-                if (clientMessageBus != null) {
-                    clientMessageBus.unsubscribe(MessageType.AUTH_REQUEST, this::handleAuthRequest);
-                    clientMessageBus.unsubscribe(MessageType.DATA_REQUEST, this::handleDataRequest);
-                    clientMessageBus.unsubscribe(MessageType.DISCONNECT, this::handleDisconnect);
-                    clientMessageBus.unsubscribe(MessageType.LOGOUT_REQUEST, this::handleLogoutRequest);
-                }
-
-                if (applicationMessageBus != null) {
-                    applicationMessageBus.unsubscribe(MessageType.DATA_RESPONSE, this::handleDataResponse);
-                }
-
-                // Close client transport and socket
-                if (clientTransport != null) {
-                    clientTransport.close();
-                }
-
-                // Close application transport and socket
-                if (applicationTransport != null) {
-                    applicationTransport.close();
-                }
-
-                if (clientSocket != null && !clientSocket.isClosed()) {
-                    clientSocket.close();
-                }
-
-                if (applicationSocket != null && !applicationSocket.isClosed()) {
-                    applicationSocket.close();
-                }
-
-                // Notify the ProxyServer that a client has disconnected
-                ProxyServer.clientDisconnected();
-
-                logger.info("Client disconnected: {}. Active connections: {}",
-                        Thread.currentThread().getName(), ProxyServer.activeConnections);
-
-            } catch (Exception e) {
-                logger.error("Error during cleanup", e);
+        // synchronized (lock) {
+        try {
+            // Unsubscribe from message handlers to avoid memory leaks
+            if (clientMessageBus != null) {
+                clientMessageBus.unsubscribe(MessageType.AUTH_REQUEST, this::handleAuthRequest);
+                clientMessageBus.unsubscribe(MessageType.DATA_REQUEST, this::handleDataRequest);
+                clientMessageBus.unsubscribe(MessageType.DISCONNECT, this::handleDisconnect);
+                clientMessageBus.unsubscribe(MessageType.LOGOUT_REQUEST, this::handleLogoutRequest);
             }
+
+            if (applicationMessageBus != null) {
+                applicationMessageBus.unsubscribe(MessageType.DATA_RESPONSE, this::handleDataResponse);
+            }
+
+            // Close client transport and socket
+            if (clientTransport != null) {
+                clientTransport.close();
+            }
+
+            // Close application transport and socket
+            if (applicationTransport != null) {
+                applicationTransport.close();
+            }
+
+            if (clientSocket != null && !clientSocket.isClosed()) {
+                clientSocket.close();
+            }
+
+            if (applicationSocket != null && !applicationSocket.isClosed()) {
+                applicationSocket.close();
+            }
+
+            // Notify the ProxyServer that a client has disconnected
+            ProxyServer.clientDisconnected();
+
+            logger.info("Client disconnected: {}. Active connections: {}",
+                    Thread.currentThread().getName(), ProxyServer.activeConnections);
+
+        } catch (Exception e) {
+            logger.error("Error during cleanup", e);
         }
     }
 }

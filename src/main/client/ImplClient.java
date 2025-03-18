@@ -65,7 +65,6 @@ public class ImplClient implements Runnable {
 
     private void registerMessageHandlers() {
         // Register all message types to be routed through our dispatcher
-        networkManager.registerHandler(MessageType.START_RESPONSE, this::routeMessage);
         networkManager.registerHandler(MessageType.AUTH_RESPONSE, this::routeMessage);
         networkManager.registerHandler(MessageType.DATA_RESPONSE, this::routeMessage);
         networkManager.registerHandler(MessageType.ERROR, this::routeMessage);
@@ -83,10 +82,6 @@ public class ImplClient implements Runnable {
             logger.debug("Updating UI for message type: {}", message.getType());
 
             switch (message.getType()) {
-                case START_RESPONSE:
-                    lanternaUI.updateConnectionStatus("Connected to " + message.getSender(), true);
-                    lanternaUI.updateStatus("Connection established");
-                    break;
 
                 case SERVER_INFO:
                     lanternaUI.updateStatus("Received server redirection info");
