@@ -104,9 +104,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
 
             Remote RemoteApplication = UnicastRemoteObject.exportObject(this, 0);
 
-            DatabaseService dbStub = (DatabaseService) RemoteApplication;
-
-            Naming.rebind("rmi://localhost:" + RMI_BACKUP_PORT + "/DatabaseService", dbStub);
+            Naming.rebind("rmi://localhost:" + RMI_BACKUP_PORT + "/DatabaseService", RemoteApplication);
 
             logger.info("RMI services bound successfully");
             logger.info("Backup server started successfully");
@@ -159,13 +157,10 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
         try {
             LocateRegistry.createRegistry(RMI_PORT);
 
-            Remote RemoteApplication = UnicastRemoteObject.exportObject(this, 0);
+            // Remote RemoteApplication = UnicastRemoteObject.exportObject(this, 0);
 
-            HeartBeatService hbStub = (HeartBeatService) RemoteApplication;
-            DatabaseService dbStub = (DatabaseService) RemoteApplication;
-
-            Naming.rebind("rmi://localhost:" + RMI_PORT + "/HeartBeatService", hbStub);
-            Naming.rebind("rmi://localhost:" + RMI_PORT + "/DatabaseService", dbStub);
+            Naming.rebind("rmi://localhost:" + RMI_PORT + "/HeartBeatService", this);
+            Naming.rebind("rmi://localhost:" + RMI_PORT + "/DatabaseService", this);
 
             isPrimary = true;
             running = true;
