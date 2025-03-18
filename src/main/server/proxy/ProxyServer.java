@@ -1,5 +1,6 @@
 package main.server.proxy;
 
+// Keep existing imports
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Map;
@@ -11,6 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import main.server.localization.LocalizationServerHandler;
 import main.server.proxy.auth.AuthService;
 import main.server.proxy.cache.CacheFIFO;
+import main.server.proxy.replication.ProxyPeerManager;
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
@@ -19,6 +21,7 @@ import main.shared.messages.SocketMessageTransport;
 import main.shared.models.WorkOrder;
 
 public class ProxyServer {
+    // Keep existing fields
     private ServerSocket serverSocket;
     private final int LOCALIZATION_PORT = 11110;
     private final String LOCALIZATION_IP = "localhost";
@@ -47,11 +50,19 @@ public class ProxyServer {
     private final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
     private final AtomicInteger nextClientId = new AtomicInteger(1);
 
+    // Add RMI related fields
+    private static final int RMI_PORT_BASE = 44440;
+    private int rmiPort;
+    private static ProxyPeerManager peerManager;
+
     public ProxyServer(int port, String serverId) {
         System.out.println("\033[2J\033[1;1H"); // Clear screen
         this.logger = Logger.getLogger(serverId);
         this.authService = AuthService.getInstance();
         SERVER_PORT = port;
+
+        // Calculate RMI port based on server port
+        this.rmiPort = RMI_PORT_BASE + (SERVER_PORT % 1000);
 
         // Initialize message bus
         this.messageBus = new MessageBus("ProxyServer-" + SERVER_PORT, logger);
@@ -59,9 +70,15 @@ public class ProxyServer {
         // Subscribe to message types
         messageBus.subscribe(MessageType.PROXY_REGISTRATION_RESPONSE, this::handleRegistrationResponse);
         messageBus.subscribe(MessageType.PING, this::handlePing);
+        messageBus.subscribe(MessageType.PROXY_PEER_INFO, this::handleProxyPeerInfo);
 
         // Inicializa o sistema de cache
         logger.info("Sistema de cache inicializado com política FIFO");
+
+        // Initialize RMI peer manager
+        peerManager = new ProxyPeerManager(String.valueOf(SERVER_PORT), cache, logger, rmiPort);
+        peerManager.startRMI();
+        logger.info("RMI peer manager initialized on port {}", rmiPort);
 
         // Add shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -81,40 +98,136 @@ public class ProxyServer {
         // Wait for registration to complete
         waitForRegistration();
 
-        // Monitor localization connection
-        // startLocalizationConnectionMonitor();
-
         this.run();
     }
 
-    private void run() {
-        try {
-            serverSocket = new ServerSocket(SERVER_PORT);
-            logger.info("Proxy Server listening on port {}", SERVER_PORT);
+    // Add new method to handle proxy peer info messages
+    private void handleProxyPeerInfo(Message message) {
+        if (message.getType() == MessageType.PROXY_PEER_INFO) {
+            try {
+                logger.info("Received PROXY_PEER_INFO from {}", message.getSender());
 
-            // Main server loop
-            while (running) {
-                logger.debug("Waiting for client connections...");
-                Socket clientSocket = serverSocket.accept();
+                // Extract peer information
+                String[] peerInfo = (String[]) message.getPayload();
+                if (peerInfo.length >= 3) {
+                    String peerId = peerInfo[0];
+                    String host = peerInfo[1];
+                    int rmiPort = Integer.parseInt(peerInfo[2]);
 
-                logger.info("Client connected: {}:{}",
-                        clientSocket.getInetAddress().getHostAddress(),
-                        clientSocket.getPort());
+                    // Don't register ourselves
+                    if (peerId.equals(serverId)) {
+                        logger.debug("Ignoring own proxy peer info");
+                        return;
+                    }
 
-                // Update connection counters
-                connectionCount++;
-                activeConnections++;
+                    // Register this peer
+                    logger.info("Registering peer proxy: {} at {}:{}", peerId, host, rmiPort);
+                    peerManager.registerPeer(host, rmiPort, peerId);
 
-                // Create handler for this client
-                ProxyServerHandler handler = new ProxyServerHandler(clientSocket, authService, logger, cache);
-                Thread thread = new Thread(handler);
-                thread.start();
-            }
-        } catch (Exception e) {
-            if (running) {
-                logger.error("Error in server main loop", e);
+                    // Send our info back to the peer if this isn't a reply already
+                    if (!"reply".equals(peerInfo.length > 3 ? peerInfo[3] : "")) {
+                        sendPeerInfo(message.getSender(), "reply");
+                    }
+                }
+
+            } catch (Exception e) {
+                logger.error("Error handling proxy peer info", e);
             }
         }
+    }
+
+    // Add new method to send peer info to another proxy
+    private void sendPeerInfo(String recipient, String flag) {
+        try {
+            // Create peer info message
+            String[] peerInfo = new String[] {
+                    serverId,
+                    SERVER_IP,
+                    String.valueOf(rmiPort),
+                    flag
+            };
+
+            Message peerInfoMsg = new Message(
+                    MessageType.PROXY_PEER_INFO,
+                    serverId,
+                    recipient,
+                    peerInfo);
+
+            // Use existing localization transport to send the message
+            localizationTransport.sendMessage(peerInfoMsg);
+            logger.info("Sent peer info to {}", recipient);
+
+        } catch (Exception e) {
+            logger.error("Error sending peer info", e);
+        }
+    }
+
+    // Update existing methods
+
+    private void shutdown() {
+        running = false;
+        try {
+            // Stop RMI
+            if (peerManager != null) {
+                peerManager.shutdown();
+            }
+
+            // Stop heartbeat thread
+            if (heartbeatThread != null) {
+                heartbeatThread.interrupt();
+            }
+
+            // Close localization connection
+            if (localizationTransport != null) {
+                localizationTransport.close();
+            }
+
+            // Shutdown message bus
+            if (messageBus != null) {
+                messageBus.unsubscribeAll();
+                messageBus.shutdown();
+            }
+
+            // Close server socket
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+        } catch (Exception e) {
+            logger.error("Error during shutdown", e);
+        }
+    }
+
+    private void handleRegistrationResponse(Message message) {
+        if (message.getType() == MessageType.PROXY_REGISTRATION_RESPONSE) {
+            Object status = message.getPayload();
+
+            if ("SUCCESS".equals(status)) {
+                logger.info("Successfully registered with localization server as {}", serverId);
+
+                // Mark registration as complete and notify waiting threads
+                synchronized (registrationLock) {
+                    registrationComplete = true;
+                    registrationLock.notifyAll();
+                }
+
+            } else if ("ALREADY_TAKEN".equals(status)) {
+                // Try with different server ID and port
+                handleRegistrationConflict();
+            } else {
+                logger.error("Unknown registration response: {}", status);
+
+                // Mark registration as failed but complete
+                synchronized (registrationLock) {
+                    registrationComplete = true;
+                    registrationLock.notifyAll();
+                }
+            }
+        }
+    }
+
+    // Add a getter for the peer manager
+    public static ProxyPeerManager getPeerManager() {
+        return peerManager;
     }
 
     private void sendStartSignal() {
@@ -163,34 +276,6 @@ public class ProxyServer {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 logger.error("Registration wait interrupted", e);
-            }
-        }
-    }
-
-    private void handleRegistrationResponse(Message message) {
-        if (message.getType() == MessageType.PROXY_REGISTRATION_RESPONSE) {
-            Object status = message.getPayload();
-
-            if ("SUCCESS".equals(status)) {
-                logger.info("Successfully registered with localization server as {}", serverId);
-
-                // Mark registration as complete and notify waiting threads
-                synchronized (registrationLock) {
-                    registrationComplete = true;
-                    registrationLock.notifyAll();
-                }
-
-            } else if ("ALREADY_TAKEN".equals(status)) {
-                // Try with different server ID and port
-                handleRegistrationConflict();
-            } else {
-                logger.error("Unknown registration response: {}", status);
-
-                // Mark registration as failed but complete
-                synchronized (registrationLock) {
-                    registrationComplete = true;
-                    registrationLock.notifyAll();
-                }
             }
         }
     }
@@ -262,44 +347,47 @@ public class ProxyServer {
         }
     }
 
-    private void shutdown() {
-        running = false;
-        try {
-            // Stop heartbeat thread
-            if (heartbeatThread != null) {
-                heartbeatThread.interrupt();
-            }
-
-            // Close localization connection
-            if (localizationTransport != null) {
-                localizationTransport.close();
-            }
-
-            // Shutdown message bus
-            if (messageBus != null) {
-                messageBus.unsubscribeAll();
-                messageBus.shutdown();
-            }
-
-            // Close server socket
-            if (serverSocket != null && !serverSocket.isClosed()) {
-                serverSocket.close();
-            }
-        } catch (Exception e) {
-            logger.error("Error during shutdown", e);
-        }
-    }
-
-    public static void main(String[] args) {
-        SERVER_PORT = 22220;
-        serverId = "Proxy-3";
-        new ProxyServer(SERVER_PORT, serverId);
-    }
-
     // Method to handle client disconnection, update active connections
     public static void clientDisconnected() {
         if (activeConnections > 0) {
             activeConnections--;
         }
+    }
+
+    private void run() {
+        try {
+            serverSocket = new ServerSocket(SERVER_PORT);
+            logger.info("Proxy Server listening on port {}", SERVER_PORT);
+
+            // Main server loop
+            while (running) {
+                logger.debug("Waiting for client connections...");
+                Socket clientSocket = serverSocket.accept();
+
+                logger.info("Client connected: {}:{}",
+                        clientSocket.getInetAddress().getHostAddress(),
+                        clientSocket.getPort());
+
+                // Update connection counters
+                connectionCount++;
+                activeConnections++;
+
+                // Create handler for this client
+                ProxyServerHandler handler = new ProxyServerHandler(clientSocket, authService, logger, cache);
+                Thread thread = new Thread(handler);
+                thread.start();
+            }
+        } catch (Exception e) {
+            if (running) {
+                logger.error("Error in server main loop", e);
+            }
+        }
+    }
+
+    // Use existing main method
+    public static void main(String[] args) {
+        SERVER_PORT = 22220;
+        serverId = "Proxy-3";
+        new ProxyServer(SERVER_PORT, serverId);
     }
 }

@@ -173,6 +173,9 @@ public class LocalizationServerHandler implements Runnable {
 
                 logger.info("Processing registration request from proxy: {} on port {}", serverId, port);
 
+                //TODO fix the refresh logic
+                //server.refreshProxyServers();
+
                 // Check if this server ID is already registered
                 if (LocalizationServer.isProxyRegistered(serverId)) {
                     // Send "already taken" response

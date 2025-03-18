@@ -17,7 +17,7 @@ import java.util.HashMap;
  * @param <V> O tipo de objeto armazenado na cache
  */
 public class CacheFIFO<V> {
-    private static final int MAX_SIZE = 20;
+    private static final int MAX_SIZE = 30;
     private final LinkedList<V> cache;
     private final Object lock = new Object(); // Objeto para sincronização
 

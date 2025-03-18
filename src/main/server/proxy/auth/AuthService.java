@@ -27,6 +27,7 @@ public class AuthService {
         // Add sample users
         users.put("admin", new User("admin", "admin123"));
         users.put("teste", new User("teste", "teste"));
+        users.put("sistemas", new User("sistemas", "distribuidos"));
     }
 
     public boolean authenticate(String username, String password) {
