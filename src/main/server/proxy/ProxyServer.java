@@ -557,8 +557,8 @@ public class ProxyServer extends UnicastRemoteObject implements ProxyCacheServic
         // new ProxyServer(22221, "Proxy-2");
         // new ProxyServer(22222, "Proxy-3");
 
-        int port = 22240;
-        String id = "Proxy-2";
+        int port = 22260;
+        String id = "Proxy-3";
 
         // Parse command line arguments
         if (args.length > 0) {

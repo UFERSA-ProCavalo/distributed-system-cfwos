@@ -2,8 +2,6 @@ package main.server.application;
 
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -33,6 +31,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
     private static final AtomicInteger processConnections = new AtomicInteger(0);
     private static final AtomicInteger activeConnections = new AtomicInteger(0);
     private static boolean running = false;
+    private ServerSocket serverSocket;
 
     public ApplicationServer(boolean isPrimary, String primaryServerAddress, int RMI_PORT) {
         System.out.println("\033[2J\033[1;1H"); // Clear screen
@@ -199,7 +198,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
         logger.info("Application server is running...");
         try {
 
-            ServerSocket serverSocket = new ServerSocket(33330);
+            serverSocket = new ServerSocket(33330);
             while (running) {
 
                 try {
@@ -232,6 +231,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
     private void shutdown() {
         try {
             running = false;
+            serverSocket.close();   
             Naming.unbind("rmi://localhost:" + RMI_PORT + "/HeartBeatService");
             Naming.unbind("rmi://localhost:" + RMI_PORT + "/DatabaseService");
             UnicastRemoteObject.unexportObject(this, true);

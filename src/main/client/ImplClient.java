@@ -14,6 +14,8 @@ public class ImplClient implements Runnable {
     // Constants
     public static final String AUTH_SUCCESS = "success";
     public static final String AUTH_FAILURE = "failure";
+    public static final String LOCALIZATION_IP = "localhost";
+    public static final int LOCALIZATION_PORT = 11110;
 
     // Services
     private final ServiceNetwork networkManager;
@@ -109,7 +111,7 @@ public class ImplClient implements Runnable {
                         // Schedule a delayed reconnect
                         new Thread(() -> {
                             try {
-                                Thread.sleep(10000); // Wait 10 seconds before retry
+                                Thread.sleep(5000); // Wait 10 seconds before retry
                                 requestReconnect();
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
@@ -243,7 +245,7 @@ public class ImplClient implements Runnable {
         }
 
         // Try to connect to the localization server
-        if (networkManager.connect("127.0.0.1", 11110)) { // Use the localization server address
+        if (networkManager.connect(LOCALIZATION_IP, LOCALIZATION_PORT)) { // Use the localization server address
             // Re-register message handlers for the new connection
             registerMessageHandlers();
 
@@ -282,7 +284,7 @@ public class ImplClient implements Runnable {
                 }
 
                 // Disconnect from current server
-                // networkManager.close();
+                networkManager.close();
 
                 // Connect to the new server
                 try {
