@@ -106,7 +106,7 @@ public class ProxyServer extends UnicastRemoteObject implements ProxyCacheServic
         discoverAndConnectToPeers();
 
         // Start periodic peer logging
-        startPeerLogging();
+        // startPeerLogging();
 
         // Start accepting connections
         this.run();
@@ -557,8 +557,8 @@ public class ProxyServer extends UnicastRemoteObject implements ProxyCacheServic
         // new ProxyServer(22221, "Proxy-2");
         // new ProxyServer(22222, "Proxy-3");
 
-        int port = 22260;
-        String id = "Proxy-3";
+        int port = 22240;
+        String id = "Proxy-2";
 
         // Parse command line arguments
         if (args.length > 0) {
@@ -579,18 +579,7 @@ public class ProxyServer extends UnicastRemoteObject implements ProxyCacheServic
         }
         new ProxyServer(port, id);
     }
-
-    // Helper method to notify peers of cache changes
-    private void notifyPeersOfCacheChange(int code, String operation, WorkOrder workOrder) {
-        for (ProxyCacheService peer : peerProxies) {
-            try {
-                peer.notifyCacheInvalidation(code, operation, workOrder);
-            } catch (RemoteException e) {
-                logger.error("Error notifying peer of cache change: {}", e.getMessage());
-            }
-        }
-    }
-
+    
     @Override
     public boolean isAlive() throws RemoteException {
         return true;

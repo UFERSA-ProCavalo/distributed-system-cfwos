@@ -4,6 +4,7 @@ import java.rmi.Remote;
 import java.rmi.RemoteException;
 import java.util.Map;
 
+import main.server.application.database.Database;
 import main.shared.models.WorkOrder;
 
 /**
@@ -15,9 +16,9 @@ public interface DatabaseService extends Remote {
 
     void replicateRemoveWorkOrder(int code) throws RemoteException;
 
-    void replicateUpdateWorkOrder(int code, String name, String description, String timestamp) throws RemoteException;
+    void replicateUpdateWorkOrder(int code, String name, String description) throws RemoteException;
 
     // Full database sync
-    void syncFullDatabase(Map<Integer, WorkOrder> database) throws RemoteException;
-    
+    void replicateDatabase(Database database) throws RemoteException;
+
 }

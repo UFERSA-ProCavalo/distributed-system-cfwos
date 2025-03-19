@@ -1,9 +1,10 @@
 package main.shared.utils.tree;
 
+import java.io.Serializable;
 import java.util.Map;
 
-public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
-
+public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V>, Serializable {
+    private static final long serialVersionUID = 1L;
     private Node root;
     private int balanceCounter;
 
@@ -458,4 +459,19 @@ public class TreeAVL<K extends Comparable<K>, V> implements ITreeAVL<K, V> {
         }
     }
 
+    // getall
+    public V[] getAll() {
+        V[] all = (V[]) new Object[getSize()];
+        getAll(root, all, 0);
+        return all;
+    }
+
+    private int getAll(Node node, V[] all, int index) {
+        if (node != null) {
+            index = getAll(node.l, all, index);
+            all[index++] = node.val;
+            index = getAll(node.r, all, index);
+        }
+        return index;
+    }
 }

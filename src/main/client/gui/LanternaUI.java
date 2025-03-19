@@ -561,6 +561,11 @@ public class LanternaUI implements Runnable {
                         // Verify code is numeric
                         int codeNum = Integer.parseInt(code);
 
+                        if (codeNum <= 0) {
+                            showError("Work order code must be a positive number!");
+                            return;
+                        }
+
                         // Format: ADD|code|name|description
                         String request = String.format("ADD|%s|%s|%s", code, name, description);
                         client.sendDataRequest(request);
@@ -678,6 +683,11 @@ public class LanternaUI implements Runnable {
                         // Verify code is numeric
                         int codeNum = Integer.parseInt(code);
 
+                        if (codeNum <= 0) {
+                            showError("Work order code must be a positive number!");
+                            return;
+                        }
+
                         // Show confirmation dialog
                         MessageDialog.showMessageDialog(
                                 gui,
@@ -782,6 +792,11 @@ public class LanternaUI implements Runnable {
                         // Verify code is numeric
                         int codeNum = Integer.parseInt(code);
 
+                        if (codeNum <= 0) {
+                            showError("Work order code must be a positive number!");
+                            return;
+                        }
+
                         // Send search request
                         client.sendDataRequest("SEARCH|" + code);
                         updateStatus("Looking up work order: " + code);
@@ -836,6 +851,11 @@ public class LanternaUI implements Runnable {
                     try {
                         // Verify code is numeric
                         int codeNum = Integer.parseInt(code);
+
+                        if (codeNum <= 0) {
+                            showError("Work order code must be a positive number!");
+                            return;
+                        }
 
                         // Show confirmation dialog
                         MessageDialog.showMessageDialog(
@@ -936,6 +956,24 @@ public class LanternaUI implements Runnable {
                         showError("Code cannot be empty");
                         return;
                     }
+
+                    try {
+                        // Verify code is numeric
+                        int codeNum = Integer.parseInt(code);
+
+                        // Verify code is positive
+                        if (codeNum <= 0) {
+                            showError("Work order code must be a positive number!");
+                            return;
+                        }
+
+                        // Send search request
+                        client.sendDataRequest("SEARCH|" + code);
+                        updateStatus("Searching for work order: " + code);
+                    } catch (NumberFormatException e) {
+                        showError("Code must be a number");
+                    }
+
                     client.sendDataRequest("SEARCH|" + code);
                 });
 

@@ -91,7 +91,9 @@ public class ProxyServerHandler implements Runnable {
                             boolean appMessageProcessed = applicationTransport.readMessage();
                             if (!appMessageProcessed) {
                                 logger.warning("Lost connection to application server");
+                                logger.info("Trying to reconnect...");
                                 // Try to reconnect
+                                Thread.sleep(2000);
                                 connectToApplicationServer();
 
                             }
@@ -265,12 +267,38 @@ public class ProxyServerHandler implements Runnable {
                 }
 
                 // Check peer caches
-                workOrder = ((ProxyServer) server).searchPeerCaches(code);
+                workOrder = server.searchPeerCaches(code);
                 if (workOrder != null) {
                     // Peer cache hit
+                    logger.info("Peer cache hit for work order {}", code);
+                    cache.add(workOrder);
                     handleCacheHit(message, operation, workOrder, requestParts);
                     return;
                 }
+            } else if (operation.equals("UPDATE") || operation.equals("REMOVE")) {
+                // Check local cache first
+                WorkOrder workOrder = cache.searchByCode(new WorkOrder(Integer.parseInt(requestParts[1]), null, null));
+
+                if (workOrder != null) {
+                    // Local cache hit
+                    handleCacheHit(message, operation, workOrder, requestParts);
+                    return;
+                }
+
+            } else if (operation.equals("ADD30")) {
+                for (int i = 1; i < 31; i++) {
+                    WorkOrder workOrder = new WorkOrder(i, "Work Order " + i, "Description " + i);
+                    cache.add(workOrder);
+
+                }
+                logger.info("Added 30 work orders to cache");
+                Message response = new Message(
+                        MessageType.DATA_RESPONSE,
+                        message.getRecipient(),
+                        message.getSender(),
+                        "Added 30 work orders to cache");
+                clientTransport.sendMessage(response);
+                return;
             }
 
             // If we get here, forward request to application server

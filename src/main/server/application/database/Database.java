@@ -4,13 +4,18 @@ import main.shared.models.WorkOrder;
 import main.shared.utils.tree.ItemFormatter;
 import main.shared.utils.tree.TreeAVL;
 
+import java.io.Serializable;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
-public class Database {
-    private static final Object lock = new Object();
+public class Database implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private static final transient Object lock = new Object();
     private TreeAVL<Integer, WorkOrder> database;
     // Formatador para WorkOrders
-    private final ItemFormatter<WorkOrder> workOrderFormatter;
+    private final transient ItemFormatter<WorkOrder> workOrderFormatter;
+    private static final transient DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
     public Database() {
         this.database = new TreeAVL<>();
@@ -37,12 +42,12 @@ public class Database {
         }
     }
 
-    public void updateWorkOrder(int code, String name, String description, String timestamp) {
+    public void updateWorkOrder(int code, String name, String description) {
         synchronized (lock) {
             WorkOrder temp = database.Search(code);
             temp.setName(name);
             temp.setDescription(description);
-            temp.setTimestamp(timestamp);
+            temp.setTimestamp(LocalDateTime.now().format(formatter));
         }
         // database.Insert(code, workOrder);
     }
@@ -71,6 +76,20 @@ public class Database {
 
     public int getBalanceCounter() {
         return database.getBalanceCounter();
+    }
+
+    // make a getall method that returns all work orders in the database
+    public WorkOrder[] getAllWorkOrders() {
+        Object[] objects = database.getAll();
+        if (objects == null) {
+            return new WorkOrder[0];
+        }
+
+        WorkOrder[] workOrders = new WorkOrder[objects.length];
+        for (int i = 0; i < objects.length; i++) {
+            workOrders[i] = (WorkOrder) objects[i];
+        }
+        return workOrders;
     }
 
     /**

@@ -23,6 +23,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
     private final Logger logger = Logger.getLogger();
     private final Database database = new Database();
 
+    private boolean alreadyTrying = false; // Flag to indicate if already trying to connect to backup
     private boolean isPrimary;
     private final String primaryServerAddress;
     private int RMI_PORT = 33340;
@@ -81,8 +82,8 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
 
             logger.info("RMI services bound successfully");
 
-            // try to connect to backup
-            connectToBackup();
+            // make a new thread to keep trying to connect to backup
+            retryConnectToBackup();
 
         } catch (Exception e) {
             logger.error("Error while starting RMI registry: " + e.getMessage());
@@ -90,11 +91,30 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
         }
     }
 
+    // retry method to put a new Thread to keep trying to reconnect to backup
+    private void retryConnectToBackup() {
+        if (alreadyTrying) {
+            return; // Already trying to connect to backup, no need to start a new thread
+        }
+        new Thread(() -> {
+            while (backupService == null) {
+                try {
+                    logger.info("Trying to connect to backup server...");
+                    connectToBackup();
+                    Thread.sleep(30000);
+                } catch (Exception e) {
+                    logger.error("Error while connecting to backup server: " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
     private void connectToBackup() {
         try {
             backupService = (DatabaseService) Naming
                     .lookup("rmi://" + primaryServerAddress + ":" + RMI_BACKUP_PORT + "/DatabaseService");
             logger.info("Connected to backup server");
+            alreadyTrying = false;
 
         } catch (Exception e) {
             logger.error("Error while connecting to backup server: " + e.getMessage());
@@ -134,10 +154,8 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
                             DatabaseService primaryDB = (DatabaseService) Naming
                                     .lookup("rmi://" + primaryServerAddress + ":" + RMI_PORT + "/DatabaseService");
 
-                            Map<Integer, WorkOrder> primaryDatabase = new HashMap<>();
-                            primaryDB.syncFullDatabase(primaryDatabase);
+                            primaryDB.replicateDatabase(this.database);
 
-                            database.syncFromMap(primaryDatabase);
                             firstSync = true;
                             logger.info("Database synchronized with primary server");
                         }
@@ -150,7 +168,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
                 }
 
                 try {
-                    Thread.sleep(5000);
+                    Thread.sleep(35000);
                 } catch (InterruptedException e) {
                     logger.error("Error while sleeping: " + e.getMessage());
                 }
@@ -250,28 +268,74 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
 
                 logger.error("Failed to replicate to backup: {}", e.getMessage());
                 backupService = null; // Clear failed backup connection
+                alreadyTrying = true; // Set flag to true to start retrying connection
+                retryConnectToBackup(); // Start retrying connection to backup
+
             }
         }
     }
 
     @Override
     public void replicateRemoveWorkOrder(int code) throws RemoteException {
-        database.removeWorkOrder(code);
-        logger.info("Replicated remove work order: {}", code);
+        try {
+
+            database.removeWorkOrder(code);
+            logger.info("{} removed work order: {}",
+                    isPrimary ? "Primary" : "Backup", code);
+            if (isPrimary && backupService != null) {
+                backupService.replicateRemoveWorkOrder(code);
+                logger.info("Replicated remove work order: {}", code);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to replicate remove work order to backup: {}", e.getMessage());
+            backupService = null; // Clear failed backup connection
+            alreadyTrying = true; // Set flag to true to start retrying connection
+            retryConnectToBackup(); // Start retrying connection to backup
+        }
     }
 
     @Override
-    public void replicateUpdateWorkOrder(int code, String name, String description, String timestamp)
+    public void replicateUpdateWorkOrder(int code, String name, String description)
             throws RemoteException {
-        database.updateWorkOrder(code, name, description, timestamp);
-        logger.info("Replicated update work order: {}", code);
+
+        database.updateWorkOrder(code, name, description);
+        logger.info("{} updated work order: {}",
+                isPrimary ? "Primary" : "Backup", code);
+        if (isPrimary && backupService != null) {
+            try {
+                backupService.replicateUpdateWorkOrder(code, name, description);
+                logger.info("Replicated update work order: {}", code);
+            } catch (Exception e) {
+                logger.error("Failed to replicate update work order to backup: {}", e.getMessage());
+                backupService = null; // Clear failed backup connection
+                alreadyTrying = true; // Set flag to true to start retrying connection
+                retryConnectToBackup(); // Start retrying connection to backup
+            }
+        }
     }
 
     @Override
-    public void syncFullDatabase(Map<Integer, WorkOrder> database) throws RemoteException {
-        this.database.copyToMap(database);
-        this.database.syncFromMap(database);
-        logger.info("Replicated full database");
+    public void replicateDatabase(Database database) throws RemoteException {
+
+        WorkOrder[] workOrders = database.getAllWorkOrders();
+
+        if (workOrders == null || workOrders.length == 0) {
+            logger.info("No work orders to replicate");
+            return;
+
+        }
+
+        this.database.clearDatabase();
+
+        for (WorkOrder workOrder : workOrders) {
+            if (workOrder != null) {
+                this.database.addWorkOrder(workOrder.getCode(), workOrder.getName(),
+                        workOrder.getDescription(), workOrder.getTimestamp());
+                logger.info("Replicated work order: {}", workOrder.getCode());
+            } else {
+                logger.warning("Received null work order during replication");
+            }
+        }
     }
 
     public ApplicationServer getServer() {

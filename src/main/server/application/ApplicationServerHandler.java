@@ -141,8 +141,8 @@ public class ApplicationServerHandler implements Runnable {
                     case "SHOW":
                         handleShowOperation(requestParts, response);
                         break;
-                    case "ADD60":
-                        add60toDatabase(response);
+                    case "ADD100":
+                        add100toDatabase(response);
                         break;
                     case "TESTE":
                         // handleTesteOperation(response);
@@ -186,13 +186,13 @@ public class ApplicationServerHandler implements Runnable {
         }
     }
 
-    private void add60toDatabase(Map<String, String> response) {
-        for (int i = 0; i < 60; i++) {
-            database.addWorkOrder(i, "name" + i, "description" + i);
+    private void add100toDatabase(Map<String, String> response) {
+        for (int i = 1; i < 101; i++) {
+            database.addWorkOrder(i, "WorkOrder " + i, "Description " + i);
 
         }
         response.put("status", "success");
-        response.put("message", "60 work orders added successfully");
+        response.put("message", "100 work orders added successfully");
 
     }
 
@@ -281,17 +281,24 @@ public class ApplicationServerHandler implements Runnable {
             return;
         }
 
-        database.removeWorkOrder(code);
+        // replicate remove
+
+        WorkOrder removedOrder = database.searchWorkOrder(code);
 
         response.put("status", "success");
         response.put("message", "Work order removed successfully");
         response.put("code", String.valueOf(code));
+        response.put("name", removedOrder.getName());
+        response.put("description", removedOrder.getDescription());
+        response.put("timestamp", removedOrder.getTimestamp());
+
+        database.removeWorkOrder(code);
     }
 
     private void handleUpdateOperation(String[] requestParts, Map<String, String> response) {
-        // Format: UPDATE|code|name|description|timestamp
-        if (requestParts.length < 5) {
-            throw new IllegalArgumentException("UPDATE operation requires code, name, description, and timestamp");
+        // Format: UPDATE|code|name|description
+        if (requestParts.length < 4) {
+            throw new IllegalArgumentException("UPDATE operation requires code, name, description");
         }
 
         int code = Integer.parseInt(requestParts[1]);
@@ -306,18 +313,23 @@ public class ApplicationServerHandler implements Runnable {
         String name = requestParts[2];
         String description = requestParts[3];
 
-        String timestamp = requestParts[4];
+        database.updateWorkOrder(code, name, description);
 
-        // TODO fix timestamp
-        if (timestamp == null) {
-            database.updateWorkOrder(code, name, description, timestamp);
-        } else {
-            database.updateWorkOrder(code, name, description, timestamp);
+        // replicate update work order
+        try {
+            server.replicateUpdateWorkOrder(code, name, description);
+        } catch (Exception e) {
+            logger.error("Error replicating update work order", e);
         }
 
         response.put("status", "success");
         response.put("message", "Work order updated successfully");
         response.put("code", String.valueOf(code));
+        response.put("name", name);
+        response.put("description", description);
+        response.put("timestamp", database.searchWorkOrder(code).getTimestamp());
+
+        
     }
 
     private void handleSearchOperation(String[] requestParts, Map<String, String> response) {
