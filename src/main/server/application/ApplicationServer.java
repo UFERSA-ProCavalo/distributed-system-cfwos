@@ -79,6 +79,11 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
             Naming.rebind("rmi://localhost:" + RMI_PORT + "/HeartBeatService", hbStub);
             Naming.rebind("rmi://localhost:" + RMI_PORT + "/DatabaseService", dbStub);
 
+            logger.info("RMI services bound successfully");
+
+            // try to connect to backup
+            connectToBackup();
+
         } catch (Exception e) {
             logger.error("Error while starting RMI registry: " + e.getMessage());
             throw new RemoteException("Error while starting RMI registry", e);
@@ -114,7 +119,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
         }
 
         new Thread(() -> {
-
+            // TODO Fully test replication operations
             // Caso o start tardio
             boolean firstSync = false;
             while (true) {
@@ -166,10 +171,6 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
             running = true;
             logger.info("Promoted to primary server");
 
-            try {
-            } catch (Exception e) {
-                logger.error("Error while connecting to backup server: " + e.getMessage());
-            }
             run();
         } catch (Exception e) {
             logger.error("Error while promoting to primary: " + e.getMessage());
@@ -236,18 +237,20 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
     @Override
     public void replicateAddWorkOrder(int code, String name, String description)
             throws RemoteException {
-        if (isPrimary) {
-            if (backupService == null) {
-                connectToBackup();
 
-            }
-            if (backupService != null) {
+        database.addWorkOrder(code, name, description);
+        logger.info("{} added work order: {}",
+                isPrimary ? "Primary" : "Backup", code);
+        if (isPrimary && backupService != null) {
+            try {
+
                 backupService.replicateAddWorkOrder(code, name, description);
+                logger.info("Replicated add work order: {}", code);
+            } catch (Exception e) {
 
+                logger.error("Failed to replicate to backup: {}", e.getMessage());
+                backupService = null; // Clear failed backup connection
             }
-        } else {
-            database.addWorkOrder(code, name, description);
-            logger.info("Replicated add work order: {}", code);
         }
     }
 
@@ -285,6 +288,14 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
 
     public static void main(String[] args) {
 
+        if (args.length > 0) {
+            if ("-prim".equals(args[0])) {
+                new ApplicationServer(true, "127.0.0.1", 33340);
+            } else if ("-back".equals(args[0])) {
+                new ApplicationServer(false, "127.0.0.1", 33340);
+            }
+        }
+
         // choose if the server is primary or backup
         System.out.println("Starting application server...");
         Scanner scanner = new Scanner(System.in);
@@ -292,7 +303,7 @@ public class ApplicationServer implements DatabaseService, HeartBeatService {
         boolean primary = scanner.nextLine().equalsIgnoreCase("y");
         scanner.close();
 
-        new ApplicationServer(primary, "localhost", 33340);
+        new ApplicationServer(primary, "127.0.0.1", 33340);
 
     }
 }

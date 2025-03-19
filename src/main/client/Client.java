@@ -13,7 +13,7 @@ public class Client {
     private final Logger logger = Logger.getLogger();
     private Socket socket;
     private InetAddress inet;
-    private final String SERVER_IP = "localhost";
+    private final String SERVER_IP = "127.0.0.1";
     private final int SERVER_PORT = 11110;
     private ImplClient implClient;
 
@@ -102,12 +102,11 @@ public class Client {
         return implClient;
     }
 
-    public boolean isAdmin(){
+    public boolean isAdmin() {
         return implClient.isAdmin();
     }
 
     public static void main(String[] args) {
-
 
         // Add shutdown hook to ensure clean disconnect
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

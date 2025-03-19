@@ -243,7 +243,7 @@ public class ImplClient implements Runnable {
         }
 
         // Try to connect to the localization server
-        if (networkManager.connect("localhost", 11110)) { // Use the localization server address
+        if (networkManager.connect("127.0.0.1", 11110)) { // Use the localization server address
             // Re-register message handlers for the new connection
             registerMessageHandlers();
 

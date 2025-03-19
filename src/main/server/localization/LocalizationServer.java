@@ -1,8 +1,13 @@
 package main.server.localization;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -12,9 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Random;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Set;
 
+import main.server.proxy.replication.ProxyCacheService;
+import main.server.proxy.replication.ProxyRegistryService;
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
@@ -26,45 +32,48 @@ import main.shared.messages.MessageType;
  * Serves as a connection entry point that redirects clients to available proxy
  * servers
  */
-public class LocalizationServer implements Runnable {
+public class LocalizationServer implements ProxyRegistryService, Serializable {
+    private static final long serialVersionUID = 1L;
     private final int port;
-    private final Logger logger;
-    private ServerSocket serverSocket;
+    private transient final Logger logger;
+    private transient ServerSocket serverSocket;
     private volatile boolean running = true;
-    private final Object lock = new Object();
+    private transient final Object lock = new Object();
 
     // Thread pools
-    private final ExecutorService connectionAcceptorPool;
-    private final ExecutorService clientHandlerPool;
+    private transient final ExecutorService connectionAcceptorPool;
+    private transient final ExecutorService clientHandlerPool;
 
     // Client tracking
-    private final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
+    private transient final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
     private final AtomicInteger nextClientId = new AtomicInteger(1);
 
     // Proxy server registry - maps server ID to connection info (host:port)
-    private static final Map<String, ProxyInfo> activeProxies = new ConcurrentHashMap<>();
+    private transient static final Map<String, ProxyInfo> activeProxies = new ConcurrentHashMap<>();
     private final Random random = new Random();
-    private final MessageBus messageBus;
+    private transient final MessageBus messageBus;
+
+    // RMI port for proxy registry service
+    private int RMI_PORT = 8000;
+    private List<String> peerProxies = new ArrayList<>();
 
     // Add these fields
     private final Set<String> respondedProxies = ConcurrentHashMap.newKeySet();
-    private final Object pongLock = new Object();
     private static final long PING_TIMEOUT_MS = 10000; // 10 seconds timeout
 
     // Simple value class - no complex logic
-    private static class ProxyInfo {
+    private static class ProxyInfo implements Serializable {
+        private static final long serialVersionUID = 1L;
         final String id;
         String host;
         String port;
         volatile int activeConnections;
-        long lastSeen; // Add timestamp for last activity
 
         public ProxyInfo(String id, String host, String port) {
             this.id = id;
             this.host = host;
             this.port = port;
             this.activeConnections = 0;
-            this.lastSeen = System.currentTimeMillis();
         }
 
         public String[] getConnectionInfo() {
@@ -90,6 +99,8 @@ public class LocalizationServer implements Runnable {
             return t;
         });
 
+        peerProxies = new ArrayList<>();
+
         // Thread pool for handling client connections
         this.clientHandlerPool = Executors.newFixedThreadPool(
                 Runtime.getRuntime().availableProcessors(),
@@ -100,6 +111,7 @@ public class LocalizationServer implements Runnable {
                 });
 
         // Register for message handlers
+        run();
     }
 
     /**
@@ -187,23 +199,12 @@ public class LocalizationServer implements Runnable {
         // Mark as responsive
         respondedProxies.add(proxyId);
 
-        // Update the proxy info
-        ProxyInfo proxy = activeProxies.get(proxyId);
-        if (proxy != null) {
-            proxy.lastSeen = System.currentTimeMillis();
+        // Update the proxy info if payload contains connection data
+        updateProxyServer(proxyId, payload);
 
-            // Update other info if available
-            if (payload instanceof Map) {
-                Map<?, ?> data = (Map<?, ?>) payload;
-                if (data.containsKey("activeConnections")) {
-                    proxy.activeConnections = Integer.parseInt(data.get("activeConnections").toString());
-                }
-            }
-        }
-
-        // Notify waiting threads
-        synchronized (pongLock) {
-            pongLock.notifyAll();
+        // Notify any waiting threads
+        synchronized (lock) {
+            lock.notifyAll();
         }
     }
 
@@ -248,6 +249,7 @@ public class LocalizationServer implements Runnable {
 
         // Send PINGs to all proxies
         List<String> proxyIds = new ArrayList<>(activeProxies.keySet());
+        int totalProxies = proxyIds.size();
 
         for (String proxyId : proxyIds) {
             LocalizationServerHandler handler = connectedClients.get(proxyId);
@@ -264,38 +266,50 @@ public class LocalizationServer implements Runnable {
                     logger.debug("Sent PING to proxy: {}", proxyId);
                 } catch (Exception e) {
                     logger.warning("Failed to send PING to {}, will be removed", proxyId);
-                    activeProxies.remove(proxyId);
                 }
             } else {
                 logger.warning("No handler or connection dead for proxy {}, will be removed", proxyId);
-                activeProxies.remove(proxyId);
             }
         }
 
-        // Wait briefly for responses
-        try {
-            Thread.sleep(2000); // Short wait for PONGs
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        // Wait for responses (all proxies or timeout)
+        long startTime = System.currentTimeMillis();
+
+        synchronized (lock) {
+            while (respondedProxies.size() < totalProxies &&
+                    (System.currentTimeMillis() - startTime) < PING_TIMEOUT_MS) {
+                try {
+                    // Wait with timeout
+                    lock.wait(1000); // Wake up every second to check
+                    logger.debug("Waiting for PONGs... received {}/{}",
+                            respondedProxies.size(), totalProxies);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
 
-        // Remove unresponsive proxies based on lastSeen
-        long currentTime = System.currentTimeMillis();
-        long staleThreshold = 10000; // 10 seconds
-
-        for (Map.Entry<String, ProxyInfo> entry : new HashMap<>(activeProxies).entrySet()) {
-            if (currentTime - entry.getValue().lastSeen > staleThreshold) {
-                logger.warning("Removing stale proxy: {}", entry.getKey());
-                activeProxies.remove(entry.getKey());
+        // Remove unresponsive proxies
+        for (String proxyId : proxyIds) {
+            if (!respondedProxies.contains(proxyId)) {
+                logger.warning("Removing unresponsive proxy: {}", proxyId);
+                activeProxies.remove(proxyId);
+            } else {
+                logger.info("Proxy {} is responsive", proxyId);
             }
         }
 
         logger.info("Proxy server refresh complete, {} active proxies remain", activeProxies.size());
     }
 
-    @Override
     public void run() {
         try {
+            Registry registry = LocateRegistry.createRegistry(RMI_PORT);
+            registry.rebind("LocalizationServer", this);
+
+            logger.info("RMI registry bound to port {}", RMI_PORT);
+
             // Start the server socket
             serverSocket = new ServerSocket(port);
             logger.info("Localization server started on port {}", port);
@@ -371,39 +385,6 @@ public class LocalizationServer implements Runnable {
     }
 
     /**
-     * Broadcast proxy info to all other proxies
-     */
-    public void broadcastProxyPeerInfo(String sourceProxyId, Object peerInfo) {
-        logger.info("Broadcasting PROXY_PEER_INFO from {} to all other proxies", sourceProxyId);
-
-        for (String proxyId : activeProxies.keySet()) {
-            // Skip the source proxy
-            if (proxyId.equals(sourceProxyId)) {
-                continue;
-            }
-
-            // Get the handler for this proxy
-            LocalizationServerHandler handler = connectedClients.get(proxyId);
-
-            if (handler != null && handler.isConnected()) {
-                try {
-                    // Create and send the peer info message
-                    Message peerInfoMsg = new Message(
-                            MessageType.PROXY_PEER_INFO,
-                            "LocalizationServer",
-                            proxyId,
-                            peerInfo);
-
-                    handler.sendMessage(peerInfoMsg);
-                    logger.debug("Sent PROXY_PEER_INFO from {} to {}", sourceProxyId, proxyId);
-                } catch (Exception e) {
-                    logger.error("Failed to send PROXY_PEER_INFO to {}: {}", proxyId, e.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
      * Shutdown the server and all resources
      */
     public void shutdown() {
@@ -461,6 +442,76 @@ public class LocalizationServer implements Runnable {
         return logger;
     }
 
+    @Override
+    public void registerProxy(String proxyId) throws RemoteException {
+        if (peerProxies == null) {
+            System.out.println("PeerProxies is null, initializing");
+            peerProxies = new ArrayList<>();
+
+        }
+
+        if (!peerProxies.contains(proxyId)) {
+            peerProxies.add(proxyId);
+
+            System.out.println("Registered proxy: " + proxyId);
+            notifyProxys(proxyId, true);
+        } else {
+            System.out.println("Proxy {} already registered" + proxyId);
+        }
+    }
+
+    @Override
+    public void unregisterProxy(String proxyId) throws RemoteException {
+        if (peerProxies.contains(proxyId)) {
+            peerProxies.remove(proxyId);
+            logger.info("Unregistered proxy: {}", proxyId);
+            notifyProxys(proxyId, false);
+        } else {
+            logger.warning("Proxy {} not found for unregister", proxyId);
+        }
+    }
+
+    @Override
+    public List<String> getRegisteredProxies() throws RemoteException {
+        return new ArrayList<>(peerProxies);
+    }
+
+    @Override
+    public void notifyProxys(String proxyId, boolean operation) throws RemoteException {
+        for (String proxy : peerProxies) {
+            if (!proxy.equals(proxyId)) {
+                try {
+                    System.out.println("Notifying proxy: " + proxy + " of registration");
+                    ProxyCacheService proxyCache = (ProxyCacheService) Naming.lookup(proxy);
+                    if (operation) {
+                        proxyCache.addProxy(proxyId);
+                        System.out.println("Notified proxy: " + proxy + " of unregistration");
+                    } else {
+                        proxyCache.checkProxys(proxyId);
+                        System.out.println("Notified proxy: " + proxy + " of unregistration");
+                    }
+
+                } catch (Exception e) {
+                    System.out.println("Failed to notify proxy: " + proxy);
+                    e.printStackTrace();
+
+                }
+            }
+        }
+    }
+
+    @Override
+    public boolean isAlive(String proxyId) throws RemoteException {
+        try {
+            ProxyCacheService proxyCache = (ProxyCacheService) Naming.lookup(proxyId);
+            return proxyCache.isAlive();
+
+        } catch (Exception e) {
+            logger.warning("Proxy {} is not alive", proxyId);
+            return false;
+        }
+    }
+
     /**
      * Run the localization server with the specified port
      */
@@ -477,7 +528,6 @@ public class LocalizationServer implements Runnable {
         }
 
         LocalizationServer server = new LocalizationServer(port);
-        new Thread(server, "localization-server-main").start();
 
         // Add shutdown hook for clean shutdown
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -488,4 +538,5 @@ public class LocalizationServer implements Runnable {
         System.out.println("Localization server started on port " + port);
         System.out.println("Press Ctrl+C to stop the server");
     }
+
 }

@@ -3,21 +3,25 @@ package main.server.proxy;
 // Keep existing imports
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.rmi.registry.LocateRegistry;
-import java.rmi.registry.Registry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.net.InetAddress;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.server.UnicastRemoteObject;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.rmi.registry.Registry;
 
-import main.server.localization.LocalizationServerHandler;
 import main.server.proxy.auth.AuthService;
 import main.server.proxy.cache.CacheFIFO;
-import main.server.proxy.replication.ProxyPeerManager;
-import main.server.proxy.replication.ProxyRMI;
+import main.server.proxy.replication.ProxyCacheService;
+import main.server.proxy.replication.ProxyRegistryService;
 import main.shared.log.Logger;
 import main.shared.messages.Message;
 import main.shared.messages.MessageBus;
@@ -25,12 +29,11 @@ import main.shared.messages.MessageType;
 import main.shared.messages.SocketMessageTransport;
 import main.shared.models.WorkOrder;
 
-public class ProxyServer {
-    // Keep existing fields
+public class ProxyServer extends UnicastRemoteObject implements ProxyCacheService {
     private ServerSocket serverSocket;
     private final int LOCALIZATION_PORT = 11110;
     private final String LOCALIZATION_IP = "localhost";
-    private static int SERVER_PORT;
+    private int SERVER_PORT;
     private final String SERVER_IP = "localhost";
     private final AuthService authService;
     private final Logger logger;
@@ -52,22 +55,21 @@ public class ProxyServer {
     public static int connectionCount = 0;
     public static int activeConnections = 0;
 
-    private final Map<String, LocalizationServerHandler> connectedClients = new ConcurrentHashMap<>();
-    private final AtomicInteger nextClientId = new AtomicInteger(1);
+    // RMI
+    private int RMI_PORT;
+    private final List<ProxyCacheService> peerProxies = new ArrayList<>();
 
-    // Add RMI related fields
-    private static final int RMI_PORT_BASE = 44440;
-    private int rmiPort;
-    private static ProxyPeerManager peerManager;
+    // Peer logging scheduler
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
-    public ProxyServer(int port, String serverId) {
+    public ProxyServer(int port, String serverId) throws RemoteException {
         System.out.println("\033[2J\033[1;1H"); // Clear screen
         this.logger = Logger.getLogger(serverId);
         this.authService = AuthService.getInstance();
         SERVER_PORT = port;
 
         // Calculate RMI port based on server port
-        this.rmiPort = RMI_PORT_BASE + (SERVER_PORT % 1000);
+        this.RMI_PORT = SERVER_PORT + 100;
 
         // Initialize message bus
         this.messageBus = new MessageBus("ProxyServer-" + SERVER_PORT, logger);
@@ -75,7 +77,6 @@ public class ProxyServer {
         // Subscribe to message types
         messageBus.subscribe(MessageType.PROXY_REGISTRATION_RESPONSE, this::handleRegistrationResponse);
         messageBus.subscribe(MessageType.PING, this::handlePing);
-        messageBus.subscribe(MessageType.PROXY_PEER_INFO, this::handleProxyPeerInfo);
 
         // Inicializa o sistema de cache
         logger.info("Sistema de cache inicializado com política FIFO");
@@ -92,108 +93,32 @@ public class ProxyServer {
 
         logger.info("Proxy Server initialized");
 
+        // Start RMI services
+        startRMIServices();
+
         // Register with localization server before starting
         sendStartSignal();
 
         // Wait for registration to complete
         waitForRegistration();
 
+        // Discover and connect to peers
+        discoverAndConnectToPeers();
+
+        // Start periodic peer logging
+        startPeerLogging();
+
+        // Start accepting connections
         this.run();
     }
-
-    // Add new method to handle proxy peer info messages
-    // Add handler method for PROXY_PEER_INFO
-    private void handleProxyPeerInfo(Message message) {
-        try {
-            if (message.getPayload() instanceof Map) {
-                Map<?, ?> peerInfo = (Map<?, ?>) message.getPayload();
-                String peerId = peerInfo.get("id").toString();
-
-                // Skip if it's our own ID
-                if (peerId.equals(serverId)) {
-                    return;
-                }
-
-                int rmiPort = Integer.parseInt(peerInfo.get("rmiPort").toString());
-                String address = peerInfo.get("address").toString();
-
-                // Register this peer with the peer manager
-                logger.info("Received peer info for {}, connecting via RMI", peerId);
-                peerManager.registerPeer(address, rmiPort, peerId);
-
-                // The registerPeer method will now handle peer discovery automatically
-            }
-        } catch (Exception e) {
-            logger.error("Error handling PROXY_PEER_INFO: {}", e.getMessage());
-        }
-    }
-
-    // Add new method to send peer info to another proxy
-    private void sendPeerInfo(String recipient, String flag) {
-        try {
-            // Create peer info message
-            String[] peerInfo = new String[] {
-                    serverId,
-                    SERVER_IP,
-                    String.valueOf(rmiPort), // Make sure this is the RMI port, not the server port
-                    flag
-            };
-
-            Message peerInfoMsg = new Message(
-                    MessageType.PROXY_PEER_INFO,
-                    serverId,
-                    recipient,
-                    peerInfo);
-
-            // Use existing localization transport to send the message
-            localizationTransport.sendMessage(peerInfoMsg);
-            logger.info("Sent peer info to {}", recipient);
-
-        } catch (Exception e) {
-            logger.error("Error sending peer info", e);
-        }
-    }
-
-    // Add this method to do a self-test after initializing the peer manager
-    // Fix RMI self-test method
-    private void testRmiConnection() {
-        try {
-            logger.info("Testing RMI self-connection");
-
-            // Use consistent service name - don't add "Proxy-" prefix if serverId already
-            // has it
-            String serviceName = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
-            logger.info("Looking up RMI service: {}", serviceName);
-
-            Registry selfRegistry = LocateRegistry.getRegistry(SERVER_IP, rmiPort);
-            ProxyRMI selfTest = (ProxyRMI) selfRegistry.lookup(serviceName);
-            String testId = selfTest.getProxyId();
-            logger.info("RMI self-test successful, returned ID: {}", testId);
-
-            // Add a test work order to see if search works
-            WorkOrder testOrder = new WorkOrder(9999, "Test Order", "RMI Test Description");
-            cache.add(testOrder);
-
-            // Try searching for it
-            WorkOrder foundOrder = selfTest.searchCache(9999);
-            if (foundOrder != null) {
-                logger.info("RMI search test successful, found: {}", foundOrder);
-            } else {
-                logger.error("RMI search test failed - order not found!");
-            }
-        } catch (Exception e) {
-            logger.error("RMI self-test failed: {}", e.getMessage(), e);
-        }
-    }
-
-    // Update existing methods
 
     private void shutdown() {
         running = false;
         try {
-            // Stop RMI
-            if (peerManager != null) {
-                peerManager.shutdown();
+            // Shutdown the peer logging scheduler
+            if (scheduler != null) {
+                scheduler.shutdownNow();
+                logger.info("Peer logging scheduler stopped");
             }
 
             // Stop heartbeat thread
@@ -210,6 +135,15 @@ public class ProxyServer {
             if (messageBus != null) {
                 messageBus.unsubscribeAll();
                 messageBus.shutdown();
+            }
+
+            // Unbind RMI services
+            try {
+                Naming.unbind("rmi://localhost:" + RMI_PORT + "/ProxyCacheService");
+                UnicastRemoteObject.unexportObject(this, true);
+                logger.info("RMI services unbound and unexported");
+            } catch (Exception e) {
+                logger.error("Error unbinding RMI services: {}", e.getMessage());
             }
 
             // Close server socket
@@ -231,7 +165,7 @@ public class ProxyServer {
             Map<String, Object> peerInfo = new HashMap<>();
             peerInfo.put("id", normalizedServerId);
             peerInfo.put("port", SERVER_PORT);
-            peerInfo.put("rmiPort", rmiPort);
+            peerInfo.put("rmiPort", RMI_PORT);
             peerInfo.put("address", InetAddress.getLocalHost().getHostAddress());
 
             // Create the message
@@ -257,19 +191,6 @@ public class ProxyServer {
             logger.info("Registration successful with localization server");
             registrationComplete = true;
 
-            // Initialize RMI peer manager
-            peerManager = new ProxyPeerManager(String.valueOf(SERVER_PORT), cache, logger, rmiPort);
-            peerManager.startRMI();
-            logger.info("RMI peer manager initialized on port {}", rmiPort);
-
-            // Test RMI connection
-            testRmiConnection();
-
-            // Announce ourselves to the peer network
-            announceToPeerNetwork();
-
-            // Send peer info after successful registration
-            sendProxyPeerInfo();
         } else if ("ALREADY_TAKEN".equals(status)) {
             logger.error("Registration failed: Server ID already taken");
             // Could implement retry logic with modified server ID
@@ -277,11 +198,6 @@ public class ProxyServer {
         } else {
             logger.error("Registration failed: {}", status);
         }
-    }
-
-    // Add a getter for the peer manager
-    public static ProxyPeerManager getPeerManager() {
-        return peerManager;
     }
 
     private void sendStartSignal() {
@@ -302,7 +218,7 @@ public class ProxyServer {
                     MessageType.PROXY_REGISTRATION_REQUEST,
                     serverId,
                     "LocalizationServer",
-                    new String[] { serverId, SERVER_IP, String.valueOf(SERVER_PORT) });
+                    new String[] { serverId, SERVER_IP, String.valueOf(SERVER_PORT), String.valueOf(RMI_PORT) });
 
             localizationTransport.sendMessage(registrationMsg);
             logger.info("Sent registration request to localization server");
@@ -344,10 +260,15 @@ public class ProxyServer {
             // Increment port and update server ID
             SERVER_PORT += 1;
             serverId = "Proxy-" + SERVER_PORT;
+            RMI_PORT += 1;
 
-            logger.info("Registration conflict detected. Retrying with new ID {} and port {}",
-                    serverId, SERVER_PORT);
+            logger.info("Registration conflict detected. Retrying with new ID {} and port {} (RMI port: {})",
+                    serverId, SERVER_PORT, RMI_PORT);
 
+            // Restart RMI services with new port
+            startRMIServices();
+
+            // Rest of the method remains the same
             // Reset registration flag
             registrationComplete = false;
 
@@ -356,7 +277,7 @@ public class ProxyServer {
                     MessageType.PROXY_REGISTRATION_REQUEST,
                     serverId,
                     "LocalizationServer",
-                    new String[] { serverId, SERVER_IP, String.valueOf(SERVER_PORT) });
+                    new String[] { serverId, SERVER_IP, String.valueOf(SERVER_PORT), String.valueOf(RMI_PORT) });
 
             logger.info("Sent registration request to localization server: {}", registrationMsg.getPayload());
             localizationTransport.sendMessage(registrationMsg);
@@ -427,7 +348,7 @@ public class ProxyServer {
                 activeConnections++;
 
                 // Create handler for this client
-                ProxyServerHandler handler = new ProxyServerHandler(clientSocket, authService, logger, cache);
+                ProxyServerHandler handler = new ProxyServerHandler(clientSocket, authService, logger, cache, this);
                 Thread thread = new Thread(handler);
                 thread.start();
             }
@@ -438,31 +359,240 @@ public class ProxyServer {
         }
     }
 
-    public static void main(String[] args) {
-        SERVER_PORT = 22220;
-        serverId = "Proxy-3";
-        new ProxyServer(SERVER_PORT, serverId);
+    private void startRMIServices() throws RemoteException {
+        try {
+            RMI_PORT = SERVER_PORT + 1;
+            logger.info("Starting RMI services on port {}", RMI_PORT);
+
+            // Create registry
+            Registry registry = LocateRegistry.createRegistry(RMI_PORT);
+
+            String rmiUrl = "rmi://localhost:" + RMI_PORT + "/ProxyCacheService/" + SERVER_PORT;
+
+            registry.rebind("ProxyCacheService", this);
+
+            peerProxies.add(this);
+
+            logger.info("Proxy server {} bound to RMI registry", rmiUrl);
+        } catch (Exception e) {
+            logger.error("Failed to start RMI services: {}", e.getMessage());
+            throw e;
+        }
     }
 
-    // Add a new method to self-announce to the peer network
+    public WorkOrder searchPeerCaches(int code) {
+        for (ProxyCacheService peer : peerProxies) {
+            try {
+                WorkOrder workOrder = peer.lookupWorkOrder(code);
+                if (workOrder != null) {
+                    return workOrder;
+                }
+            } catch (Exception e) {
+                logger.error("Error searching peer cache: {}", e.getMessage());
+                // Remove unreachable peer
+                this.peerProxies.remove(peer);
+            }
+        }
+        return null;
+    }
+
+    public void invalidatePeerCaches(int code, String operation, WorkOrder updatedWorkOrder) {
+        for (ProxyCacheService peer : peerProxies) {
+            try {
+                peer.notifyCacheInvalidation(code, operation, updatedWorkOrder);
+            } catch (Exception e) {
+                logger.error("Error invalidating peer cache: {}", e.getMessage());
+                // Remove unreachable peer
+                this.peerProxies.remove(peer);
+            }
+        }
+    }
 
     /**
-     * Announce this proxy to the peer network
-     * Called after successful registration with localization server
+     * Start a scheduled task to log connected peers every 5 seconds
      */
-    private void announceToPeerNetwork() {
-        try {
-            // Ensure proxy ID has the proper format
-            String normalizedServerId = serverId.startsWith("Proxy-") ? serverId : "Proxy-" + serverId;
+    private void startPeerLogging() {
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                logPeerConnections();
+            } catch (Exception e) {
+                logger.error("Error in peer logging task", e);
+            }
+        }, 5, 5, TimeUnit.SECONDS);
 
-            // Use the normalized ID for RMI binding
-            String myHost = InetAddress.getLocalHost().getHostAddress();
+        logger.info("Started periodic peer logging task (every 5 seconds)");
+    }
 
-            // Now when we get peer info through localization server,
-            // our peer RMI will handle the rest of the peer discovery automatically
-            logger.info("Ready to discover peers. Will connect and exchange peer info through RMI.");
-        } catch (Exception e) {
-            logger.error("Error announcing to peer network: {}", e.getMessage());
+    /**
+     * Log information about all connected peers
+     */
+    private void logPeerConnections() {
+        if (peerProxies.isEmpty()) {
+            logger.info("=== No connected peers ===");
+            return;
         }
+
+        logger.info("=== Connected Peers ({} total) ===", peerProxies.size());
+
+        int i = 1;
+
+        for (ProxyCacheService peer : peerProxies) {
+            try {
+                logger.info("{}. {} - Status: Connected", i++, peer.toString());
+            } catch (Exception e) {
+                logger.info("{}. {} - Status: Error ({})", i++, peer.toString(), e.getMessage());
+                // Consider removing unresponsive peer
+                peerProxies.remove(peer);
+            }
+        }
+
+        logger.info("=====================================");
+    }
+
+    private void discoverAndConnectToPeers() {
+        try {
+            // Use consistent port for RMI registry
+            Registry registry = LocateRegistry.getRegistry(LOCALIZATION_IP, 8000);
+            logger.debug("Looking up LocalizationServer in registry at {}:{}", LOCALIZATION_IP, 8000);
+
+            ProxyRegistryService registryService = (ProxyRegistryService) registry.lookup("LocalizationServer");
+            logger.info("Found registry service: {}", registryService);
+
+            // Try to get registered proxies first (may fail, but continue)
+            try {
+                List<String> existingProxies = registryService.getRegisteredProxies();
+                logger.info("Found {} existing proxies", existingProxies.size());
+            } catch (Exception e) {
+                logger.warning("Could not get existing proxies: {}", e.getMessage());
+            }
+
+            // Register ourselves
+            try {
+                registryService.registerProxy("Proxy-" + SERVER_PORT);
+                logger.info("Registered with proxy registry service");
+            } catch (Exception e) {
+                logger.error("Failed to register with proxy registry service: {}", e.getMessage());
+                e.printStackTrace();
+            }
+
+            // Hardcode peer connections for simplicity (remove complex discovery)
+            int[] peerPorts = { 22220, 22240, 22260 };
+            for (int peerPort : peerPorts) {
+                if (peerPort != SERVER_PORT) { // Don't connect to self
+                    try {
+                        int peerRmiPort = peerPort + 1;
+                        logger.debug("Connecting to peer at port {}", peerRmiPort);
+
+                        Registry peerRegistry = LocateRegistry.getRegistry(SERVER_IP, peerRmiPort);
+                        ProxyCacheService peer = (ProxyCacheService) peerRegistry.lookup("ProxyCacheService");
+
+                        if (peer != null) {
+                            peerProxies.add(peer);
+                            logger.info("Connected to peer at port {}", peerPort);
+                        }
+                    } catch (Exception e) {
+                        logger.debug("Peer at port {} not available yet", peerPort);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error discovering peers: {}", e.getMessage());
+            e.printStackTrace(); // For debugging
+        }
+    }
+
+    @Override
+    public WorkOrder lookupWorkOrder(int code) throws RemoteException {
+        return cache.searchByCode(new WorkOrder(code, null, null));
+    }
+
+    @Override
+    public void notifyCacheInvalidation(int code, String operation, WorkOrder updatedWorkOrder)
+            throws RemoteException {
+        WorkOrder existing = cache.searchByCode(new WorkOrder(code, null, null));
+        if (existing != null) {
+            if ("UPDATE".equals(operation) && updatedWorkOrder != null) {
+                cache.remove(existing);
+                cache.add(updatedWorkOrder);
+            } else if ("REMOVE".equals(operation)) {
+                cache.remove(existing);
+            }
+        }
+    }
+
+    @Override
+    public void addProxy(String proxyId) throws RemoteException {
+        try {
+            ProxyCacheService peer = (ProxyCacheService) Naming
+                    .lookup("rmi://localhost:" + RMI_PORT + "/ProxyCacheService");
+            peerProxies.add(peer);
+            logger.info("Peer {} connected", proxyId);
+        } catch (Exception e) {
+            logger.error("Error adding peer {}: {}", proxyId, e.getMessage());
+            try {
+                Registry registry = LocateRegistry.getRegistry(8000);
+                ProxyRegistryService registryService = (ProxyRegistryService) registry.lookup("LocalizationServer");
+                registryService.unregisterProxy(proxyId);
+                logger.info("Unregistered peer {}", proxyId);
+            } catch (Exception e2) {
+                logger.error("Error unregistering peer {}: {}", proxyId, e2.getMessage());
+            }
+        }
+    }
+
+    @Override
+    public void checkProxys(String proxyId) throws RemoteException {
+        for (ProxyCacheService peer : peerProxies) {
+            try {
+                peer.isAlive();
+            } catch (Exception e) {
+                logger.error("Peer {} is not alive", proxyId);
+                peerProxies.remove(peer);
+            }
+        }
+    }
+
+    public static void main(String[] args) throws RemoteException {
+        // new ProxyServer(22220, "Proxy-1");
+        // new ProxyServer(22221, "Proxy-2");
+        // new ProxyServer(22222, "Proxy-3");
+
+        int port = 22260;
+        String id = "Proxy-3";
+
+        // Parse command line arguments
+        if (args.length > 0) {
+            // Check for server shorthand arguments
+            if ("-sp1".equals(args[0])) {
+                port = 22220;
+                id = "Proxy-1";
+            } else if ("-sp2".equals(args[0])) {
+                port = 22221;
+                id = "Proxy-2";
+            } else if ("-sp3".equals(args[0])) {
+                port = 22222;
+                id = "Proxy-3";
+            }
+
+            System.out.println("Starting Proxy Server with ID: " + id + " on port " + port);
+            new ProxyServer(port, id);
+        }
+        new ProxyServer(port, id);
+    }
+
+    // Helper method to notify peers of cache changes
+    private void notifyPeersOfCacheChange(int code, String operation, WorkOrder workOrder) {
+        for (ProxyCacheService peer : peerProxies) {
+            try {
+                peer.notifyCacheInvalidation(code, operation, workOrder);
+            } catch (RemoteException e) {
+                logger.error("Error notifying peer of cache change: {}", e.getMessage());
+            }
+        }
+    }
+
+    @Override
+    public boolean isAlive() throws RemoteException {
+        return true;
     }
 }

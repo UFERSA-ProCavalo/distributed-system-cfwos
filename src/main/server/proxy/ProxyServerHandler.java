@@ -23,6 +23,7 @@ public class ProxyServerHandler implements Runnable {
     private AuthService authService;
     private Logger logger;
     private CacheFIFO<WorkOrder> cache;
+    private ProxyServer server;
 
     // Detalhes do cliente
     private MessageBus clientMessageBus;
@@ -31,14 +32,15 @@ public class ProxyServerHandler implements Runnable {
     private boolean authenticated = true;
 
     // Detalhes do servidor de aplicação
-    private static final String APP_SERVER_HOST = "localhost";
+    private static final String APP_SERVER_HOST = "127.0.0.1";
     private static final int APP_SERVER_PORT = 33330;
     private Socket applicationSocket;
     private MessageBus applicationMessageBus;
     private SocketMessageTransport applicationTransport;
 
     public ProxyServerHandler(Socket client, AuthService authService, Logger logger,
-            CacheFIFO<WorkOrder> workOrderCache) {
+            CacheFIFO<WorkOrder> workOrderCache, ProxyServer server) {
+        this.server = server;
         this.clientSocket = client;
         this.authService = authService;
         this.logger = logger;
@@ -240,173 +242,112 @@ public class ProxyServerHandler implements Runnable {
         }
     }
 
-    // Modify handleDataRequest to search peer caches on cache miss
     private void handleDataRequest(Message message) {
-        // Only authenticated clients can make data requests
-        synchronized (lock) {
-            if (!authenticated) {
-                logger.warning("Unauthenticated data request rejected");
-                return;
-            }
+        if (!authenticated) {
+            logger.warning("Unauthenticated data request rejected");
+            return;
+        }
 
-            logger.info("Handling DATA_REQUEST from client {}: {}", message.getSender(), message.getPayload());
+        try {
+            String[] requestParts = message.getPayload().toString().split("\\|");
+            String operation = requestParts[0].toUpperCase();
 
-            logger.info("Forwarding DATA_REQUEST from client {} to application server", message.getSender());
-            try {
-                try {
-                    if (message.getPayload() == null) {
-                        logger.warning("Invalid data request payload in DATA_REQUEST");
-                        Message errorMsg = new Message(
-                                MessageType.ERROR,
-                                message.getRecipient(),
-                                message.getSender(),
-                                "Invalid data request payload in DATA_REQUEST");
+            if (operation.equals("SEARCH")) {
+                int code = Integer.parseInt(requestParts[1]);
 
-                        clientTransport.sendMessage(errorMsg);
-                        return;
-                    }
+                // Check local cache first
+                WorkOrder workOrder = cache.searchByCode(new WorkOrder(code, null, null));
 
-                    String requestStr = message.getPayload().toString();
-                    String[] requestParts = requestStr.split("\\|");
-                    String operation = requestParts[0].toUpperCase();
-
-                    logger.info("Received DATA REQUEST operation: {}", operation);
-
-                    if (operation.equals("ADD20")) {
-                        // Adiciona 20 work orders na cache
-                        for (int i = 0; i < 20; i++) {
-                            cache.add(new WorkOrder(i, "WorkOrder " + i, "Description " + i));
-                        }
-                        logCacheMetrics();
-                        clientTransport.sendMessage(new Message(
-                                MessageType.DATA_RESPONSE,
-                                message.getRecipient(),
-                                message.getSender(),
-                                "Added 20 work orders to cache"));
-                        return;
-                    }
-
-                    if (operation.equals("SEARCH") || operation.equals("UPDATE") || operation.equals("REMOVE")) {
-                        // Check local cache first
-                        int workOrderCode = Integer.parseInt(requestParts[1]);
-                        WorkOrder workOrder = cache.searchByCode(new WorkOrder(workOrderCode, null, null));
-
-                        if (workOrder != null) {
-                            // Local cache hit
-                            logger.info("Local cache HIT for work order: {}", workOrder);
-                            handleCacheHit(message, operation, workOrder, requestParts);
-                            return;
-                        } else if (operation.equals("SEARCH")) {
-                            // If search operation and local cache miss, check peer caches
-                            logger.info("Local cache MISS for work order: {}, checking peer caches", workOrderCode);
-                            
-                            // Use peer manager to search peer caches
-                            WorkOrder peerWorkOrder = ProxyServer.getPeerManager().searchPeerCaches(workOrderCode);
-                            
-                            if (peerWorkOrder != null) {
-                                // Peer cache hit
-                                logger.info("Peer cache HIT for work order: {}", peerWorkOrder);
-                                
-                                // Add to local cache
-                                cache.add(peerWorkOrder);
-                                logCacheMetrics();
-                                
-                                // Handle as cache hit
-                                handleCacheHit(message, operation, peerWorkOrder, requestParts);
-                                return;
-                            }
-                            
-                            logger.info("Peer cache MISS for work order: {}, forwarding to application server", workOrderCode);
-                        } else {
-                            logger.info("Local cache MISS for work order: {}", requestParts[1]);
-                        }
-                    }
-
-                } catch (Exception e) {
-                    logger.error("Error processing DATA_REQUEST " + e.getStackTrace());
+                if (workOrder != null) {
+                    // Local cache hit
+                    handleCacheHit(message, operation, workOrder, requestParts);
+                    return;
                 }
 
-                // If we get here, we need to forward the request to the application server
-                forwardRequestToApplicationServer(message);
-
-            } catch (Exception e) {
-                logger.error("Error forwarding data request to application server", e);
-
-                // Send error back to client
-                Message errorMsg = new Message(
-                        MessageType.ERROR,
-                        message.getRecipient(),
-                        message.getSender(),
-                        "Error processing request: " + e.getMessage());
-                clientTransport.sendMessage(errorMsg);
+                // Check peer caches
+                workOrder = ((ProxyServer) server).searchPeerCaches(code);
+                if (workOrder != null) {
+                    // Peer cache hit
+                    handleCacheHit(message, operation, workOrder, requestParts);
+                    return;
+                }
             }
+
+            // If we get here, forward request to application server
+            forwardRequestToApplicationServer(message);
+
+        } catch (Exception e) {
+            logger.error("Error processing data request: {}", e.getMessage());
+            // sendErrorToClient(message.getSender(), "Error processing request");
         }
     }
-    
-    // Add new helper method to handle cache hits
-    private void handleCacheHit(Message message, String operation, WorkOrder workOrder, String[] requestParts) throws Exception {
-        Message forwardedRequest;
-        
-        switch (operation) {
-            case "SEARCH":
-                // Cache HIT em uma busca
-                // Pega o formato de envio do servidor e envia para o cliente
-                Map<String, String> workOrderMap = MapUtil.of(
-                        "status", "success",
-                        "source", message.getRecipient() + " (cache)",
-                        "message", "Work order found",
-                        "code", String.valueOf(workOrder.getCode()),
-                        "name", workOrder.getName(),
-                        "description", workOrder.getDescription(),
-                        "timestamp", workOrder.getTimestamp().toString());
 
-                // Send response from cache
-                Message cacheResponse = new Message(
-                        MessageType.DATA_RESPONSE,
-                        message.getRecipient(),
-                        message.getSender(),
-                        workOrderMap);
+    private void handleCacheHit(Message message, String operation, WorkOrder workOrder, String[] requestParts) {
+        try {
+            Message response;
 
-                clientTransport.sendMessage(cacheResponse);
-                break;
-                
-            case "REMOVE":
-                // Envia a requisição para o servidor e em seguida remove da cache
-                forwardedRequest = new Message(
-                        MessageType.DATA_REQUEST,
-                        message.getSender(),
-                        message.getRecipient(),
-                        message.getPayload());
-                applicationTransport.sendMessage(forwardedRequest);
-                
-                // Remove from cache
-                cache.remove(workOrder);
-                logger.info("Removed WorkOrder with code {} from cache", workOrder.getCode());
-                logCacheMetrics();
-                break;
-                
-            case "UPDATE":
-                // Atualiza o workOrder na cache e envia a requisição para o servidor
-                forwardedRequest = new Message(
-                        MessageType.DATA_REQUEST,
-                        message.getSender(),
-                        message.getRecipient(),
-                        message.getPayload());
-                applicationTransport.sendMessage(forwardedRequest);
+            switch (operation) {
+                case "SEARCH":
+                    // Return cached data directly
+                    Map<String, String> workOrderMap = MapUtil.of(
+                            "status", "success",
+                            "source", message.getRecipient() + " (cache)",
+                            "message", "Work order found",
+                            "code", String.valueOf(workOrder.getCode()),
+                            "name", workOrder.getName(),
+                            "description", workOrder.getDescription(),
+                            "timestamp", workOrder.getTimestamp().toString());
 
-                // Update in cache
-                cache.remove(workOrder);
-                cache.add(new WorkOrder(workOrder.getCode(), requestParts[2], requestParts[3]));
-                logger.info("Updated WorkOrder with code {} in cache", workOrder.getCode());
-                logCacheMetrics();
-                break;
-                
-            default:
-                break;
+                    clientTransport.sendMessage(new Message(
+                            MessageType.DATA_RESPONSE,
+                            message.getRecipient(),
+                            message.getSender(),
+                            workOrderMap));
+                    break;
+
+                case "UPDATE":
+                    // Create updated work order
+                    WorkOrder updatedWorkOrder = new WorkOrder(
+                            workOrder.getCode(),
+                            requestParts[2],
+                            requestParts[3]);
+
+                    // Forward to application server first
+                    forwardRequestToApplicationServer(message);
+
+                    // Update local cache and notify peers
+                    cache.remove(workOrder);
+                    cache.add(updatedWorkOrder);
+                    ((ProxyServer) server).invalidatePeerCaches(
+                            workOrder.getCode(),
+                            "UPDATE",
+                            updatedWorkOrder);
+
+                    logger.info("Updated work order {} in cache and notified peers", workOrder.getCode());
+                    break;
+
+                case "REMOVE":
+                    // Forward to application server first
+                    forwardRequestToApplicationServer(message);
+
+                    // Remove from cache and notify peers
+                    cache.remove(workOrder);
+                    ((ProxyServer) server).invalidatePeerCaches(
+                            workOrder.getCode(),
+                            "REMOVE",
+                            null);
+
+                    logger.info("Removed work order {} from cache and notified peers", workOrder.getCode());
+                    break;
+            }
+
+            logCacheMetrics();
+
+        } catch (Exception e) {
+            logger.error("Error handling cache operation: {}", e.getMessage());
         }
     }
-    
-    // Add new helper method to forward requests to application server
+
     private void forwardRequestToApplicationServer(Message message) throws Exception {
         logger.info("Forwarding DATA_REQUEST from client {} to application server: {}", message.getSender(),
                 message.getPayload());

@@ -107,7 +107,6 @@ public class LocalizationServerHandler implements Runnable {
 
             // Add handler for proxy registration and peer info
             messageBus.subscribe(MessageType.PROXY_REGISTRATION_REQUEST, this::handleProxyRegistration);
-            messageBus.subscribe(MessageType.PROXY_PEER_INFO, this::handleProxyPeerInfo);
             messageBus.subscribe(MessageType.PONG, this::handlePong);
 
             logger.debug("Communication setup complete for client {}", clientId);
@@ -215,17 +214,6 @@ public class LocalizationServerHandler implements Runnable {
 
             // Forward to main server to process this PONG
             server.handleProxyPong(senderId, message.getPayload());
-        }
-    }
-
-    // Add handler for PROXY_PEER_INFO messages
-    private void handleProxyPeerInfo(Message message) {
-        logger.info("Received PROXY_PEER_INFO from {}", message.getSender());
-
-        // Verify this is from a registered proxy
-        if (message.getSender().startsWith("Proxy-")) {
-            // Forward to all other proxies
-            server.broadcastProxyPeerInfo(message.getSender(), message.getPayload());
         }
     }
 
